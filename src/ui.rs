@@ -125,12 +125,23 @@ pub fn print_freed(freed: u64, before: Option<u64>, after: Option<u64>) {
     }
 }
 
+/// Shared menu theme with checkboxes that read clearly: filled green circle
+/// when ticked, hollow grey one when not.
+fn menu_theme() -> ColorfulTheme {
+    use dialoguer::console::style;
+    ColorfulTheme {
+        checked_item_prefix: style("◉".to_string()).for_stderr().green(),
+        unchecked_item_prefix: style("○".to_string()).for_stderr().dim(),
+        ..ColorfulTheme::default()
+    }
+}
+
 /// Interactive multi-select over the available targets. Everything starts
 /// checked, so pressing Enter keeps them all.
 pub fn select_targets(names: &[&str]) -> Result<Vec<usize>> {
     let items: Vec<String> = names.iter().map(|n| format!("{} {n}", icon(n))).collect();
     let defaults = vec![true; items.len()];
-    let selection = dialoguer::MultiSelect::with_theme(&ColorfulTheme::default())
+    let selection = dialoguer::MultiSelect::with_theme(&menu_theme())
         .with_prompt("Select targets (space to toggle, enter to confirm)")
         .items(&items)
         .defaults(&defaults)
@@ -150,7 +161,7 @@ pub fn select_findings(report: &Report) -> Result<Vec<usize>> {
         })
         .collect();
     let defaults = vec![true; items.len()];
-    let selection = dialoguer::MultiSelect::with_theme(&ColorfulTheme::default())
+    let selection = dialoguer::MultiSelect::with_theme(&menu_theme())
         .with_prompt(format!("Select what to clean in {}", report.target))
         .items(&items)
         .defaults(&defaults)
