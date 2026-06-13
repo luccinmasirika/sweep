@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{anyhow, bail, Result};
 
@@ -14,9 +14,15 @@ fn which(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// Run a cleanup command quietly: its own chatter (deleted Docker IDs, npm
+/// logs, …) is dropped so only sweep's progress shows.
 pub fn run(args: &[String]) -> Result<()> {
     let (cmd, rest) = args.split_first().ok_or_else(|| anyhow!("empty command"))?;
-    let status = Command::new(cmd).args(rest).status()?;
+    let status = Command::new(cmd)
+        .args(rest)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
     if !status.success() {
         bail!("`{}` exited with {status}", args.join(" "));
     }
