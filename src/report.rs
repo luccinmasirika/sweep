@@ -21,8 +21,8 @@ pub struct Finding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub action: CleanAction,
-    /// Personal data (e.g. a large file). Left unchecked in the menu and never
-    /// removed by `--yes`; it takes a deliberate tick to delete.
+    /// Personal data like a large file. Left unchecked in the menu and never
+    /// removed by `--yes`; deleting it takes a deliberate tick.
     #[serde(default)]
     pub risky: bool,
 }

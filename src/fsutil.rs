@@ -29,8 +29,8 @@ pub fn remove_path(path: &Path) -> Result<()> {
 }
 
 /// Empty a directory, keeping the directory itself. Best-effort: locked or
-/// in-use entries (common in caches, e.g. `com.apple.Music`) are skipped
-/// instead of aborting the whole operation.
+/// in-use entries like the `com.apple.Music` cache are skipped instead of
+/// aborting the whole operation.
 pub fn empty_dir(path: &Path) -> Result<()> {
     if !path.is_dir() {
         return Ok(());
