@@ -29,6 +29,26 @@ fn size_cell(bytes: u64, width: usize) -> String {
     }
 }
 
+/// At most this many rows per target; the rest roll up into a summary line.
+const MAX_ROWS: usize = 12;
+
+/// Home-relative, middle-elided path that stays readable on one line.
+fn pretty_path(path: &std::path::Path) -> String {
+    let shown = match dirs::home_dir().and_then(|h| path.strip_prefix(&h).ok()) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    };
+    if shown.chars().count() <= 52 {
+        return shown;
+    }
+    let parts: Vec<&str> = shown.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.len() > 4 {
+        format!("{}/…/{}", parts[0], parts[parts.len() - 3..].join("/"))
+    } else {
+        shown
+    }
+}
+
 fn icon(target: &str) -> &'static str {
     match target {
         "system-caches" => "🧹",
@@ -72,7 +92,8 @@ pub fn print_report(report: &Report) {
         println!("   {}", "nothing found".dimmed());
         return;
     }
-    for f in &report.findings {
+    let shown = count.min(MAX_ROWS);
+    for f in &report.findings[..shown] {
         let mut tail = String::new();
         if f.risky {
             tail.push_str(&format!("{} ", "⚠ personal".red()));
@@ -81,15 +102,26 @@ pub fn print_report(report: &Report) {
             tail.push_str(&format!("({note})").yellow().to_string());
         }
         if tail.is_empty() {
-            println!("  {}  {}", size_cell(f.size, 10), f.path.display().dimmed());
+            println!(
+                "  {}  {}",
+                size_cell(f.size, 10),
+                pretty_path(&f.path).dimmed()
+            );
         } else {
             println!(
                 "  {}  {}  {}",
                 size_cell(f.size, 10),
-                f.path.display().dimmed(),
+                pretty_path(&f.path).dimmed(),
                 tail
             );
         }
+    }
+    if count > shown {
+        let rest: u64 = report.findings[shown..].iter().map(|f| f.size).sum();
+        println!(
+            "  {}",
+            format!("… and {} more ({})", count - shown, human(rest)).dimmed()
+        );
     }
     println!(
         "  {} {}",
@@ -186,8 +218,8 @@ pub fn select_findings(report: &Report) -> Result<Vec<usize>> {
         .findings
         .iter()
         .map(|f| match &f.note {
-            Some(note) => format!("{}  {}  ({note})", human(f.size), f.path.display()),
-            None => format!("{}  {}", human(f.size), f.path.display()),
+            Some(note) => format!("{}  {}  ({note})", human(f.size), pretty_path(&f.path)),
+            None => format!("{}  {}", human(f.size), pretty_path(&f.path)),
         })
         .collect();
     let defaults: Vec<bool> = report.findings.iter().map(|f| !f.risky).collect();
