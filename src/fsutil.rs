@@ -28,13 +28,16 @@ pub fn remove_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Remove the contents of a directory while keeping the directory itself.
+/// Empty a directory, keeping the directory itself. Best-effort: locked or
+/// in-use entries (common in caches, e.g. `com.apple.Music`) are skipped
+/// instead of aborting the whole operation.
 pub fn empty_dir(path: &Path) -> Result<()> {
     if !path.is_dir() {
         return Ok(());
     }
     for entry in fs::read_dir(path)? {
-        remove_path(&entry?.path())?;
+        let Ok(entry) = entry else { continue };
+        let _ = remove_path(&entry.path());
     }
     Ok(())
 }

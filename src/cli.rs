@@ -136,10 +136,10 @@ pub fn run_clean(
 
         let pb = ui::clean_progress(chosen.len() as u64);
         for finding in chosen {
-            pb.set_message(finding.path.display().to_string());
+            pb.set_message(ui::pretty_path(&finding.path));
             match apply(finding) {
                 Ok(bytes) => freed += bytes,
-                Err(e) => ui::warn(&format!("{}: {e}", finding.path.display())),
+                Err(e) => ui::warn(&format!("{}: {e}", ui::pretty_path(&finding.path))),
             }
             pb.inc(1);
         }

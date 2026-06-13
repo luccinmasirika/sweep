@@ -33,7 +33,7 @@ fn size_cell(bytes: u64, width: usize) -> String {
 const MAX_ROWS: usize = 12;
 
 /// Home-relative, middle-elided path that stays readable on one line.
-fn pretty_path(path: &std::path::Path) -> String {
+pub fn pretty_path(path: &std::path::Path) -> String {
     let shown = match dirs::home_dir().and_then(|h| path.strip_prefix(&h).ok()) {
         Some(rest) => format!("~/{}", rest.display()),
         None => path.display().to_string(),
