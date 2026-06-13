@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 
 use crate::config::Config;
 use crate::fsutil;
-use crate::report::{apply, Report};
+use crate::report::{apply, Finding, Report};
 use crate::targets;
 use crate::ui;
 
@@ -86,20 +86,42 @@ pub fn run_clean(cfg: &Config, yes: bool, only: &[String]) -> Result<()> {
         }
         ui::print_report(report);
 
-        let removable: Vec<_> = report.findings.iter().filter(|f| f.removable()).collect();
-        if removable.is_empty() {
+        if !report.findings.iter().any(|f| f.removable()) {
             ui::note("read-only, nothing to delete here");
             continue;
         }
-        if !yes && !ui::confirm(&format!("Clean {}?", report.target))? {
+
+        let selected = if yes {
+            report
+                .findings
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.removable())
+                .map(|(i, _)| i)
+                .collect()
+        } else {
+            ui::select_findings(report)?
+        };
+
+        let chosen: Vec<&Finding> = selected
+            .iter()
+            .filter_map(|&i| report.findings.get(i))
+            .filter(|f| f.removable())
+            .collect();
+        if chosen.is_empty() {
             continue;
         }
-        for finding in removable {
+
+        let pb = ui::clean_progress(chosen.len() as u64);
+        for finding in chosen {
+            pb.set_message(finding.path.display().to_string());
             match apply(finding) {
                 Ok(bytes) => freed += bytes,
                 Err(e) => ui::warn(&format!("{}: {e}", finding.path.display())),
             }
+            pb.inc(1);
         }
+        pb.finish_and_clear();
         ui::ok(&format!("{} cleaned", report.target));
     }
 
