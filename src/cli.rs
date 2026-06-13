@@ -42,7 +42,15 @@ pub enum Command {
         /// Restrict to these targets (comma separated)
         #[arg(long, value_delimiter = ',')]
         only: Vec<String>,
+        /// Prune all unused Docker images and clear heavier dev caches
+        #[arg(long)]
+        aggressive: bool,
+        /// Also prune Docker volumes (destructive, implies --aggressive)
+        #[arg(long)]
+        volumes: bool,
     },
+    /// Diagnose where disk space is going (read-only)
+    Doctor,
     /// Print the effective configuration
     Config,
 }
@@ -92,9 +100,19 @@ pub fn run_scan(cfg: &Config, json: bool, only: &[String]) -> Result<()> {
     Ok(())
 }
 
-pub fn run_clean(cfg: &Config, yes: bool, only: &[String]) -> Result<()> {
+pub fn run_clean(
+    cfg: &Config,
+    yes: bool,
+    only: &[String],
+    aggressive: bool,
+    volumes: bool,
+) -> Result<()> {
+    let mut cfg = cfg.clone();
+    cfg.aggressive = aggressive || volumes;
+    cfg.prune_volumes = volumes;
+
     let before = fsutil::free_space_root();
-    let reports = collect(cfg, only, !yes && interactive())?;
+    let reports = collect(&cfg, only, !yes && interactive())?;
     let mut freed: u64 = 0;
 
     for report in &reports {
@@ -151,6 +169,16 @@ pub fn run_config(cfg: &Config, json: bool) -> Result<()> {
         ui::print_json(cfg)?;
     } else {
         println!("{}", toml::to_string_pretty(cfg)?);
+    }
+    Ok(())
+}
+
+pub fn run_doctor(json: bool) -> Result<()> {
+    let report = fsutil::diagnose();
+    if json {
+        ui::print_json(&report)?;
+    } else {
+        ui::print_doctor(&report);
     }
     Ok(())
 }

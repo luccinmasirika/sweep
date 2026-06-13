@@ -25,21 +25,34 @@ sweep scan --json          # same, as machine-readable JSON
 sweep clean                # free space, confirming before each target
 sweep clean --yes          # skip the prompts
 sweep clean --only caches,dev-tools
+sweep clean --aggressive   # prune all unused Docker images, heavier dev caches
+sweep doctor               # diagnose where space is going (read-only)
 sweep config               # print the effective configuration
 ```
 
 ## Targets
 
-| Target         | Action                                                       |
-| -------------- | ------------------------------------------------------------ |
-| `caches`       | Empties `~/Library/Caches`, `~/Library/Logs`, `~/.Trash`.    |
-| `dev-tools`    | `brew cleanup`, npm/pnpm/yarn caches, `docker system prune`. |
-| `large-files`  | Lists the biggest entries in your folders (read-only).       |
-| `node-modules` | Finds `node_modules` dirs, flags idle projects.              |
+| Target            | Action                                                          |
+| ----------------- | --------------------------------------------------------------- |
+| `caches`          | Empties `~/Library/Caches`, `~/Library/Logs`, `~/.Trash`.       |
+| `dev-tools`       | `brew cleanup`, npm/pnpm/yarn/cargo/pip caches, `docker prune`. |
+| `large-files`     | Lists the biggest entries in your folders (read-only).          |
+| `node-modules`    | Finds `node_modules` dirs, flags idle projects.                 |
+| `build-artifacts` | Finds regenerable build dirs (`target`, `.next`, …).            |
 
-Only the tools actually installed on your machine are offered under
-`dev-tools`. `docker system prune` removes unused images and networks but never
-named volumes.
+Only the tools actually installed on your machine are offered under `dev-tools`.
+
+### Aggressive mode
+
+`--aggressive` upgrades `docker system prune` to `-a` (every unused image) and
+adds the heavier dev caches like `go clean -modcache`. `--volumes` additionally
+prunes Docker volumes — this destroys volume data, so it is never on by default.
+
+### Doctor
+
+`sweep doctor` is read-only. It reports free space, APFS local snapshots, and
+the heaviest `~/Library` folders, which is usually where the opaque "System
+Data" hides.
 
 ## Configuration
 

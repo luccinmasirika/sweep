@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use walkdir::WalkDir;
 
 /// Total size of every regular file under `path`, not following symlinks.
@@ -49,6 +50,63 @@ pub fn free_space_root() -> Option<u64> {
         .parse()
         .ok()?;
     Some(avail_kb * 1024)
+}
+
+#[derive(Debug, Serialize)]
+pub struct DirUsage {
+    pub path: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Diagnosis {
+    pub free_space: Option<u64>,
+    pub local_snapshots: Vec<String>,
+    pub library_dirs: Vec<DirUsage>,
+}
+
+/// Read-only snapshot of where space is going: free space, APFS local
+/// snapshots, and the heaviest sub-directories of `~/Library`.
+pub fn diagnose() -> Diagnosis {
+    let local_snapshots =
+        crate::exec::capture(&["tmutil".into(), "listlocalsnapshots".into(), "/".into()])
+            .map(|out| {
+                out.lines()
+                    .filter(|l| l.contains("com.apple"))
+                    .map(|l| l.trim().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+    let mut library_dirs = Vec::new();
+    if let Some(lib) = dirs::home_dir().map(|h| h.join("Library")) {
+        for sub in [
+            "Caches",
+            "Containers",
+            "Application Support",
+            "Group Containers",
+            "Developer",
+            "Logs",
+        ] {
+            let dir = lib.join(sub);
+            if dir.is_dir() {
+                let size = dir_size(&dir);
+                if size > 0 {
+                    library_dirs.push(DirUsage {
+                        path: format!("~/Library/{sub}"),
+                        size,
+                    });
+                }
+            }
+        }
+        library_dirs.sort_by(|a, b| b.size.cmp(&a.size));
+    }
+
+    Diagnosis {
+        free_space: free_space_root(),
+        local_snapshots,
+        library_dirs,
+    }
 }
 
 #[cfg(test)]

@@ -10,14 +10,23 @@ pub struct Config {
     pub dev_tools: bool,
     pub large_files: bool,
     pub node_modules: bool,
+    pub build_artifacts: bool,
 
     pub cache_dirs: Vec<PathBuf>,
     pub scan_roots: Vec<PathBuf>,
     pub large_files_dirs: Vec<PathBuf>,
+    pub build_dir_names: Vec<String>,
 
     pub large_files_top: usize,
     pub downloads_stale_days: u64,
     pub node_modules_stale_days: u64,
+    pub build_artifacts_stale_days: u64,
+
+    /// Runtime-only flags set from CLI, never read from or written to TOML.
+    #[serde(skip)]
+    pub aggressive: bool,
+    #[serde(skip)]
+    pub prune_volumes: bool,
 }
 
 impl Default for Config {
@@ -28,6 +37,7 @@ impl Default for Config {
             dev_tools: true,
             large_files: true,
             node_modules: true,
+            build_artifacts: true,
             cache_dirs: vec![
                 home.join("Library/Caches"),
                 home.join("Library/Logs"),
@@ -35,9 +45,13 @@ impl Default for Config {
             ],
             scan_roots: vec![home.join("Developer"), home.join("Documents")],
             large_files_dirs: vec![home.join("Documents"), home.join("Downloads")],
+            build_dir_names: vec!["target".into(), ".next".into()],
             large_files_top: 20,
             downloads_stale_days: 90,
             node_modules_stale_days: 60,
+            build_artifacts_stale_days: 30,
+            aggressive: false,
+            prune_volumes: false,
         }
     }
 }

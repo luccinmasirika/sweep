@@ -6,6 +6,7 @@ caches = true
 dev_tools = true
 large_files = true
 node_modules = true
+build_artifacts = true
 
 # Directories emptied by the `caches` target.
 cache_dirs = [
@@ -14,8 +15,13 @@ cache_dirs = [
     "~/.Trash",
 ]
 
-# Where `node-modules` searches for orphan dependency folders.
+# Where `node-modules` and `build-artifacts` search.
 scan_roots = ["~/Developer", "~/Documents"]
+
+# Regenerable build directories cleaned by `build-artifacts`.
+# Defaults are safe; add "__pycache__", "dist" or "build" only if you know
+# those are output dirs in your projects.
+build_dir_names = ["target", ".next"]
 
 # Directories inspected (read-only) by `large-files`.
 large_files_dirs = ["~/Documents", "~/Downloads"]
@@ -26,3 +32,4 @@ large_files_top = 20
 # Flag downloads / projects untouched for this many days.
 downloads_stale_days = 90
 node_modules_stale_days = 60
+build_artifacts_stale_days = 30

@@ -17,7 +17,13 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Scan { only } => cli::run_scan(&cfg, cli.json, &only),
-        Command::Clean { yes, only } => cli::run_clean(&cfg, yes, &only),
+        Command::Clean {
+            yes,
+            only,
+            aggressive,
+            volumes,
+        } => cli::run_clean(&cfg, yes, &only, aggressive, volumes),
+        Command::Doctor => cli::run_doctor(cli.json),
         Command::Config => cli::run_config(&cfg, cli.json),
     }
 }

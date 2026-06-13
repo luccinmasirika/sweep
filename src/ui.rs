@@ -35,6 +35,7 @@ fn icon(target: &str) -> &'static str {
         "dev-tools" => "📦",
         "large-files" => "📄",
         "node-modules" => "🗂 ",
+        "build-artifacts" => "🏗 ",
         _ => "•",
     }
 }
@@ -179,6 +180,46 @@ pub fn ok(msg: &str) {
 
 pub fn warn(msg: &str) {
     eprintln!("  {} {msg}", "!".yellow());
+}
+
+pub fn print_doctor(d: &crate::fsutil::Diagnosis) {
+    println!();
+    println!("{}", "Disk doctor".bold().underline());
+
+    if let Some(free) = d.free_space {
+        println!("  free on /     {}", human(free).bold());
+    }
+
+    println!();
+    println!("{}", "APFS local snapshots".bold());
+    if d.local_snapshots.is_empty() {
+        println!("  {}", "none".dimmed());
+    } else {
+        for snap in &d.local_snapshots {
+            println!("  {snap}");
+        }
+        println!(
+            "  {}",
+            "tip: `tmutil deletelocalsnapshots <date>` to remove".dimmed()
+        );
+    }
+
+    println!();
+    println!("{}", "Heaviest ~/Library folders".bold());
+    if d.library_dirs.is_empty() {
+        println!("  {}", "nothing found".dimmed());
+    } else {
+        for dir in &d.library_dirs {
+            println!("  {}  {}", size_cell(dir.size, 10), dir.path.dimmed());
+        }
+    }
+
+    println!();
+    println!(
+        "{}",
+        "Run `sweep clean` for caches & dev junk, or `sweep clean --aggressive` to go further."
+            .dimmed()
+    );
 }
 
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {

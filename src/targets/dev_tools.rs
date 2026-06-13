@@ -19,7 +19,7 @@ impl Target for DevTools {
         cfg.dev_tools
     }
 
-    fn scan(&self, _cfg: &Config) -> Result<Report> {
+    fn scan(&self, cfg: &Config) -> Result<Report> {
         let mut report = Report::new(self.name());
 
         if exec::command_exists("brew") {
@@ -72,16 +72,58 @@ impl Target for DevTools {
             });
         }
 
+        if let Some(cache) = dirs::home_dir().map(|h| h.join(".cargo/registry/cache")) {
+            if cache.is_dir() {
+                report.findings.push(Finding {
+                    path: cache.clone(),
+                    size: fsutil::dir_size(&cache),
+                    note: Some("cargo registry cache".to_string()),
+                    action: CleanAction::EmptyDir,
+                });
+            }
+        }
+
+        if let Some(cache) = dirs::home_dir().map(|h| h.join("Library/Caches/pip")) {
+            if cache.is_dir() {
+                report.findings.push(Finding {
+                    path: cache.clone(),
+                    size: fsutil::dir_size(&cache),
+                    note: Some("pip cache".to_string()),
+                    action: CleanAction::EmptyDir,
+                });
+            }
+        }
+
+        if cfg.aggressive && exec::command_exists("go") {
+            let size = dirs::home_dir()
+                .map(|h| h.join("go/pkg/mod"))
+                .filter(|p| p.is_dir())
+                .map(|p| fsutil::dir_size(&p))
+                .unwrap_or(0);
+            report.findings.push(Finding {
+                path: PathBuf::from("go module cache"),
+                size,
+                note: Some("re-downloaded on next build".to_string()),
+                action: CleanAction::Command(words(&["go", "clean", "-modcache"])),
+            });
+        }
+
         if exec::command_exists("docker") {
             let note = exec::capture(&words(&["docker", "system", "df"]))
                 .ok()
                 .filter(|out| !out.trim().is_empty())
                 .map(|_| "see `docker system df` for reclaimable size".to_string());
+            let cmd = docker_prune_cmd(cfg.aggressive, cfg.prune_volumes);
+            let label = if cfg.aggressive {
+                "Docker (all unused images & networks)"
+            } else {
+                "Docker (unused images & networks)"
+            };
             report.findings.push(Finding {
-                path: PathBuf::from("Docker (unused images & networks)"),
+                path: PathBuf::from(label),
                 size: 0,
                 note,
-                action: CleanAction::Command(words(&["docker", "system", "prune", "-f"])),
+                action: CleanAction::Command(cmd),
             });
         }
 
@@ -91,4 +133,36 @@ impl Target for DevTools {
 
 fn words(args: &[&str]) -> Vec<String> {
     args.iter().map(|a| a.to_string()).collect()
+}
+
+fn docker_prune_cmd(aggressive: bool, volumes: bool) -> Vec<String> {
+    let mut cmd = words(&["docker", "system", "prune", "-f"]);
+    if aggressive {
+        cmd.push("-a".to_string());
+    }
+    if volumes {
+        cmd.push("--volumes".to_string());
+    }
+    cmd
+}
+
+#[cfg(test)]
+mod tests {
+    use super::docker_prune_cmd;
+
+    #[test]
+    fn docker_cmd_scales_with_flags() {
+        assert_eq!(
+            docker_prune_cmd(false, false),
+            ["docker", "system", "prune", "-f"]
+        );
+        assert_eq!(
+            docker_prune_cmd(true, false),
+            ["docker", "system", "prune", "-f", "-a"]
+        );
+        assert_eq!(
+            docker_prune_cmd(true, true),
+            ["docker", "system", "prune", "-f", "-a", "--volumes"]
+        );
+    }
 }
