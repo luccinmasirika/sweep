@@ -21,114 +21,127 @@ impl Target for DevTools {
 
     fn scan(&self, cfg: &Config) -> Result<Report> {
         let mut report = Report::new(self.name());
+        let f = &mut report.findings;
 
         if exec::command_exists("brew") {
-            let note = exec::capture(&words(&["brew", "cleanup", "--dry-run"]))
-                .ok()
-                .and_then(|out| {
-                    out.lines()
-                        .rev()
-                        .find(|l| l.contains("approximately"))
-                        .map(|l| l.trim().to_string())
-                });
-            report.findings.push(Finding {
-                path: PathBuf::from("Homebrew cache"),
-                size: 0,
-                note,
-                action: CleanAction::Command(words(&["brew", "cleanup", "-s"])),
-            });
+            let mut finding = command_finding("Homebrew cache", &["brew", "cleanup", "-s"]);
+            if let Some(note) = brew_reclaimable() {
+                finding = finding.with_note(note);
+            }
+            f.push(finding);
         }
 
         if exec::command_exists("npm") {
-            let size = exec::capture(&words(&["npm", "config", "get", "cache"]))
-                .ok()
-                .map(|p| PathBuf::from(p.trim()))
-                .filter(|p| p.is_dir())
-                .map(|p| fsutil::dir_size(&p))
-                .unwrap_or(0);
-            report.findings.push(Finding {
-                path: PathBuf::from("npm cache"),
-                size,
-                note: None,
-                action: CleanAction::Command(words(&["npm", "cache", "clean", "--force"])),
-            });
+            let size = cache_size(&["npm", "config", "get", "cache"]);
+            f.push(
+                Finding::dir(
+                    PathBuf::from("npm cache"),
+                    size,
+                    CleanAction::Command(words(&["npm", "cache", "clean", "--force"])),
+                )
+                .with_note("npm"),
+            );
         }
 
         if exec::command_exists("pnpm") {
-            report.findings.push(Finding {
-                path: PathBuf::from("pnpm store"),
-                size: 0,
-                note: None,
-                action: CleanAction::Command(words(&["pnpm", "store", "prune"])),
-            });
+            f.push(command_finding("pnpm store", &["pnpm", "store", "prune"]));
         }
 
         if exec::command_exists("yarn") {
-            report.findings.push(Finding {
-                path: PathBuf::from("yarn cache"),
-                size: 0,
-                note: None,
-                action: CleanAction::Command(words(&["yarn", "cache", "clean"])),
-            });
+            f.push(command_finding("yarn cache", &["yarn", "cache", "clean"]));
         }
 
-        if let Some(cache) = dirs::home_dir().map(|h| h.join(".cargo/registry/cache")) {
-            if cache.is_dir() {
-                report.findings.push(Finding {
-                    path: cache.clone(),
-                    size: fsutil::dir_size(&cache),
-                    note: Some("cargo registry cache".to_string()),
-                    action: CleanAction::EmptyDir,
-                });
-            }
+        let cargo_cache = cfg.home.join(".cargo/registry/cache");
+        if cargo_cache.is_dir() {
+            f.push(
+                Finding::dir(
+                    cargo_cache.clone(),
+                    fsutil::dir_size(&cargo_cache),
+                    CleanAction::EmptyDir,
+                )
+                .with_note("cargo registry cache"),
+            );
         }
 
-        if let Some(cache) = dirs::home_dir().map(|h| h.join("Library/Caches/pip")) {
-            if cache.is_dir() {
-                report.findings.push(Finding {
-                    path: cache.clone(),
-                    size: fsutil::dir_size(&cache),
-                    note: Some("pip cache".to_string()),
-                    action: CleanAction::EmptyDir,
-                });
-            }
+        let pip_cache = cfg.home.join("Library/Caches/pip");
+        if pip_cache.is_dir() {
+            f.push(
+                Finding::dir(
+                    pip_cache.clone(),
+                    fsutil::dir_size(&pip_cache),
+                    CleanAction::EmptyDir,
+                )
+                .with_note("pip cache"),
+            );
         }
 
         if cfg.aggressive && exec::command_exists("go") {
-            let size = dirs::home_dir()
-                .map(|h| h.join("go/pkg/mod"))
-                .filter(|p| p.is_dir())
-                .map(|p| fsutil::dir_size(&p))
-                .unwrap_or(0);
-            report.findings.push(Finding {
-                path: PathBuf::from("go module cache"),
-                size,
-                note: Some("re-downloaded on next build".to_string()),
-                action: CleanAction::Command(words(&["go", "clean", "-modcache"])),
-            });
+            let modcache = cfg.home.join("go/pkg/mod");
+            let size = if modcache.is_dir() {
+                fsutil::dir_size(&modcache)
+            } else {
+                0
+            };
+            f.push(
+                Finding::dir(
+                    PathBuf::from("go module cache"),
+                    size,
+                    CleanAction::Command(words(&["go", "clean", "-modcache"])),
+                )
+                .with_note("re-downloaded on next build"),
+            );
         }
 
         if exec::command_exists("docker") {
-            let note = exec::capture(&words(&["docker", "system", "df"]))
-                .ok()
-                .filter(|out| !out.trim().is_empty())
-                .map(|_| "see `docker system df` for reclaimable size".to_string());
-            let cmd = docker_prune_cmd(cfg.aggressive, cfg.prune_volumes);
             let label = if cfg.aggressive {
                 "Docker (all unused images & networks)"
             } else {
                 "Docker (unused images & networks)"
             };
-            report.findings.push(Finding {
-                path: PathBuf::from(label),
-                size: 0,
-                note,
-                action: CleanAction::Command(cmd),
-            });
+            let mut finding = Finding::dir(
+                PathBuf::from(label),
+                0,
+                CleanAction::Command(docker_prune_cmd(cfg.aggressive, cfg.prune_volumes)),
+            );
+            if let Some(note) = docker_reclaimable() {
+                finding = finding.with_note(note);
+            }
+            f.push(finding);
         }
 
         Ok(report)
     }
+}
+
+fn command_finding(label: &str, cmd: &[&str]) -> Finding {
+    Finding::dir(PathBuf::from(label), 0, CleanAction::Command(words(cmd)))
+}
+
+fn cache_size(query: &[&str]) -> u64 {
+    exec::capture(&words(query))
+        .ok()
+        .map(|p| PathBuf::from(p.trim()))
+        .filter(|p| p.is_dir())
+        .map(|p| fsutil::dir_size(&p))
+        .unwrap_or(0)
+}
+
+fn brew_reclaimable() -> Option<String> {
+    exec::capture(&words(&["brew", "cleanup", "--dry-run"]))
+        .ok()
+        .and_then(|out| {
+            out.lines()
+                .rev()
+                .find(|l| l.contains("approximately"))
+                .map(|l| l.trim().to_string())
+        })
+}
+
+fn docker_reclaimable() -> Option<String> {
+    exec::capture(&words(&["docker", "system", "df"]))
+        .ok()
+        .filter(|out| !out.trim().is_empty())
+        .map(|_| "see `docker system df` for reclaimable size".to_string())
 }
 
 fn words(args: &[&str]) -> Vec<String> {

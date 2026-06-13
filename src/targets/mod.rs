@@ -8,11 +8,12 @@ use crate::config::Config;
 use crate::fsutil;
 use crate::report::{CleanAction, Finding, Report};
 
-pub mod build_artifacts;
-pub mod caches;
+pub mod app_caches;
 pub mod dev_tools;
-pub mod large_files;
-pub mod node_modules;
+pub mod large_items;
+pub mod projects;
+pub mod system_caches;
+pub mod xcode;
 
 pub trait Target {
     fn name(&self) -> &'static str;
@@ -22,18 +23,25 @@ pub trait Target {
 
 pub fn all() -> Vec<Box<dyn Target>> {
     vec![
-        Box::new(caches::Caches),
+        Box::new(system_caches::SystemCaches),
+        Box::new(app_caches::AppCaches),
         Box::new(dev_tools::DevTools),
-        Box::new(large_files::LargeFiles),
-        Box::new(node_modules::NodeModules),
-        Box::new(build_artifacts::BuildArtifacts),
+        Box::new(xcode::Xcode),
+        Box::new(projects::Projects),
+        Box::new(large_items::LargeItems),
     ]
 }
 
 /// Walk `roots` and collect every directory whose name matches one of `names`,
-/// without descending into a match (or into `.git` / unrelated `node_modules`).
-/// Each hit becomes a removable finding, flagged stale when its project looks idle.
-fn find_dirs(roots: &[PathBuf], names: &[&str], stale: Duration) -> Vec<Finding> {
+/// without descending into a match, into `.git`, into an unrelated
+/// `node_modules`, or into any `prune` prefix. Each hit becomes a removable
+/// finding, flagged stale when its project looks idle.
+fn find_dirs(
+    roots: &[PathBuf],
+    names: &[&str],
+    stale: Duration,
+    prune: &[PathBuf],
+) -> Vec<Finding> {
     let days = stale.as_secs() / 86_400;
     let mut found = Vec::new();
 
@@ -50,17 +58,19 @@ fn find_dirs(roots: &[PathBuf], names: &[&str], stale: Duration) -> Vec<Finding>
             if !entry.file_type().is_dir() {
                 continue;
             }
+            if prune.iter().any(|p| entry.path().starts_with(p)) {
+                walker.skip_current_dir();
+                continue;
+            }
             let name = entry.file_name().to_string_lossy();
             if names.iter().any(|n| *n == name) {
                 let path = entry.path().to_path_buf();
                 let size = fsutil::dir_size(&path);
-                let note = parent_stale(&path, stale).then(|| format!("idle > {days}d"));
-                found.push(Finding {
-                    path,
-                    size,
-                    note,
-                    action: CleanAction::RemovePath,
-                });
+                let mut finding = Finding::dir(path.clone(), size, CleanAction::RemovePath);
+                if parent_stale(&path, stale) {
+                    finding = finding.with_note(format!("idle > {days}d"));
+                }
+                found.push(finding);
                 walker.skip_current_dir();
             } else if name == ".git" || (name == "node_modules" && !names.contains(&"node_modules"))
             {
@@ -105,10 +115,28 @@ mod tests {
             &[root.path().to_path_buf()],
             &["target"],
             Duration::from_secs(60 * 86_400),
+            &[],
         );
 
         assert_eq!(found.len(), 1);
         assert!(found[0].path.ends_with("target"));
         assert!(found[0].size >= 2048);
+    }
+
+    #[test]
+    fn prune_prefix_skips_subtree() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("Library/app/target")).unwrap();
+        fs::create_dir_all(root.path().join("code/target")).unwrap();
+
+        let found = find_dirs(
+            &[root.path().to_path_buf()],
+            &["target"],
+            Duration::from_secs(60 * 86_400),
+            &[root.path().join("Library")],
+        );
+
+        assert_eq!(found.len(), 1);
+        assert!(found[0].path.starts_with(root.path().join("code")));
     }
 }

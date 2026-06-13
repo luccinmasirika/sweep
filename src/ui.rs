@@ -31,11 +31,12 @@ fn size_cell(bytes: u64, width: usize) -> String {
 
 fn icon(target: &str) -> &'static str {
     match target {
-        "caches" => "🧹",
+        "system-caches" => "🧹",
+        "app-caches" => "📱",
         "dev-tools" => "📦",
-        "large-files" => "📄",
-        "node-modules" => "🗂 ",
-        "build-artifacts" => "🏗 ",
+        "xcode" => "🔨",
+        "projects" => "🏗 ",
+        "large-items" => "📄",
         _ => "•",
     }
 }
@@ -72,14 +73,22 @@ pub fn print_report(report: &Report) {
         return;
     }
     for f in &report.findings {
-        match &f.note {
-            Some(note) => println!(
+        let mut tail = String::new();
+        if f.risky {
+            tail.push_str(&format!("{} ", "⚠ personal".red()));
+        }
+        if let Some(note) = &f.note {
+            tail.push_str(&format!("({note})").yellow().to_string());
+        }
+        if tail.is_empty() {
+            println!("  {}  {}", size_cell(f.size, 10), f.path.display().dimmed());
+        } else {
+            println!(
                 "  {}  {}  {}",
                 size_cell(f.size, 10),
                 f.path.display().dimmed(),
-                format!("({note})").yellow()
-            ),
-            None => println!("  {}  {}", size_cell(f.size, 10), f.path.display().dimmed()),
+                tail
+            );
         }
     }
     println!(
@@ -161,17 +170,13 @@ pub fn select_findings(report: &Report) -> Result<Vec<usize>> {
             None => format!("{}  {}", human(f.size), f.path.display()),
         })
         .collect();
-    let defaults = vec![true; items.len()];
+    let defaults: Vec<bool> = report.findings.iter().map(|f| !f.risky).collect();
     let selection = dialoguer::MultiSelect::with_theme(&menu_theme())
         .with_prompt(format!("Select what to clean in {}", report.target))
         .items(&items)
         .defaults(&defaults)
         .interact()?;
     Ok(selection)
-}
-
-pub fn note(msg: &str) {
-    println!("   {}", msg.dimmed());
 }
 
 pub fn ok(msg: &str) {

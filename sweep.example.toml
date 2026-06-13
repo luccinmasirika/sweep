@@ -1,35 +1,38 @@
-# Copy to ./sweep.toml or ~/.config/sweep/config.toml.
-# Any field left out falls back to the built-in default.
+# sweep works with no config at all — everything below is optional.
+# Copy to ./sweep.toml or ~/.config/sweep/config.toml to override a default.
 
-# Toggle whole targets on/off.
-caches = true
+# Turn whole detectors on or off.
+system_caches = true
+app_caches = true
 dev_tools = true
-large_files = true
-node_modules = true
-build_artifacts = true
+xcode = true
+projects = true
+large_items = true
 
-# Directories emptied by the `caches` target.
-cache_dirs = [
-    "~/Library/Caches",
-    "~/Library/Logs",
-    "~/.Trash",
+# Where to look. Defaults to your home directory; override mainly for testing.
+# home = "~"
+
+# Extra path prefixes to skip during the deep home walk (on top of ~/Library
+# and ~/.Trash, which are always skipped).
+exclude = []
+
+# Regenerable build/dependency directory names the `projects` scan deletes.
+# Defaults are safe; add "dist", "build" or "out" only if those are output dirs
+# in your projects.
+project_dir_names = [
+    "node_modules", "target", ".next", ".nuxt", ".svelte-kit",
+    ".turbo", ".parcel-cache", ".gradle", "Pods", "venv", ".venv",
 ]
 
-# Where `node-modules` and `build-artifacts` search.
-scan_roots = ["~/Developer", "~/Documents"]
+# Extra folders to inspect for large personal items.
+extra_large_roots = []
 
-# Regenerable build directories cleaned by `build-artifacts`.
-# Defaults are safe; add "__pycache__", "dist" or "build" only if you know
-# those are output dirs in your projects.
-build_dir_names = ["target", ".next"]
+# A personal item must be at least this big to be listed (bytes).
+large_min_bytes = 500000000
 
-# Directories inspected (read-only) by `large-files`.
-large_files_dirs = ["~/Documents", "~/Downloads"]
-
-# Show this many of the biggest entries per directory.
-large_files_top = 20
+# Build/cache dirs below this are ignored to keep the list signal-heavy (bytes).
+min_dir_bytes = 1000000
 
 # Flag downloads / projects untouched for this many days.
 downloads_stale_days = 90
-node_modules_stale_days = 60
-build_artifacts_stale_days = 30
+projects_stale_days = 30

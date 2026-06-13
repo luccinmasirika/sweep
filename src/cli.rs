@@ -121,17 +121,12 @@ pub fn run_clean(
         }
         ui::print_report(report);
 
-        if !report.findings.iter().any(|f| f.removable()) {
-            ui::note("read-only, nothing to delete here");
-            continue;
-        }
-
         let selected = if yes {
             report
                 .findings
                 .iter()
                 .enumerate()
-                .filter(|(_, f)| f.removable())
+                .filter(|(_, f)| !f.risky)
                 .map(|(i, _)| i)
                 .collect()
         } else {
@@ -141,7 +136,6 @@ pub fn run_clean(
         let chosen: Vec<&Finding> = selected
             .iter()
             .filter_map(|&i| report.findings.get(i))
-            .filter(|f| f.removable())
             .collect();
         if chosen.is_empty() {
             continue;

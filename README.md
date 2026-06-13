@@ -1,13 +1,17 @@
 # sweep
 
-Safe, interactive disk cleanup for macOS. `sweep` reports what is taking up
-space, then frees it only after you confirm, so nothing is deleted by accident.
+Safe, interactive disk cleanup for macOS. `sweep` discovers what is taking up
+space on its own and frees it only after you confirm, so nothing is deleted by
+accident.
 
 ## Why
 
-`scan` never touches the disk. `clean` asks before each target, and the
-`large-files` target is read-only by design: it surfaces your biggest files so
-you can decide, but it will never delete them.
+There is nothing to configure. `sweep` knows the places that usually grow on a
+Mac (system and app caches, Xcode, package-manager caches) and walks your home
+folder to find regenerable build/dependency dirs wherever they live — it does
+not need to be told where your projects are. `scan` never touches the disk;
+`clean` confirms each target; personal files are surfaced but start unchecked
+and are never removed by `--yes`.
 
 ## Install
 
@@ -24,23 +28,25 @@ sweep scan                 # analyse only, delete nothing
 sweep scan --json          # same, as machine-readable JSON
 sweep clean                # free space, confirming before each target
 sweep clean --yes          # skip the prompts
-sweep clean --only caches,dev-tools
+sweep clean --only projects,app-caches
 sweep clean --aggressive   # prune all unused Docker images, heavier dev caches
 sweep doctor               # diagnose where space is going (read-only)
 sweep config               # print the effective configuration
 ```
 
-## Targets
+## What it detects
 
-| Target            | Action                                                          |
-| ----------------- | --------------------------------------------------------------- |
-| `caches`          | Empties `~/Library/Caches`, `~/Library/Logs`, `~/.Trash`.       |
-| `dev-tools`       | `brew cleanup`, npm/pnpm/yarn/cargo/pip caches, `docker prune`. |
-| `large-files`     | Lists the biggest entries in your folders (read-only).          |
-| `node-modules`    | Finds `node_modules` dirs, flags idle projects.                 |
-| `build-artifacts` | Finds regenerable build dirs (`target`, `.next`, …).            |
+| Detector        | How it finds it                                                          |
+| --------------- | ------------------------------------------------------------------------ |
+| `system-caches` | Known paths: `~/Library/Caches`, `~/Library/Logs`, `~/.Trash`.           |
+| `app-caches`    | Cache-named dirs discovered under Application Support / Containers.       |
+| `dev-tools`     | `brew`/npm/pnpm/yarn + cargo/pip caches, `docker prune` (tools present).  |
+| `xcode`         | DerivedData, device support, simulators, archives, iOS backups.          |
+| `projects`      | Deep home walk for regenerable build/dep dirs (`node_modules`, `target`…). |
+| `large-items`   | Biggest personal files/folders over a threshold (start unchecked).       |
 
-Only the tools actually installed on your machine are offered under `dev-tools`.
+Nothing is hard-coded to a particular machine: detectors resolve known paths
+relative to your home and discover the rest by scanning.
 
 ### Aggressive mode
 

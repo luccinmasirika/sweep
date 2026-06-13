@@ -12,8 +12,6 @@ pub enum CleanAction {
     /// Wipe the directory's contents but keep the directory itself.
     EmptyDir,
     Command(Vec<String>),
-    /// Reported for inspection only, never deleted.
-    ReadOnly,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -23,11 +21,31 @@ pub struct Finding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     pub action: CleanAction,
+    /// Personal data (e.g. a large file). Left unchecked in the menu and never
+    /// removed by `--yes`; it takes a deliberate tick to delete.
+    #[serde(default)]
+    pub risky: bool,
 }
 
 impl Finding {
-    pub fn removable(&self) -> bool {
-        !matches!(self.action, CleanAction::ReadOnly)
+    pub fn dir(path: PathBuf, size: u64, action: CleanAction) -> Self {
+        Self {
+            path,
+            size,
+            note: None,
+            action,
+            risky: false,
+        }
+    }
+
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
+    }
+
+    pub fn risky(mut self, risky: bool) -> Self {
+        self.risky = risky;
+        self
     }
 }
 
@@ -45,10 +63,12 @@ impl Report {
         }
     }
 
+    /// Space the safe (non-personal) findings would free. Risky personal items
+    /// are excluded so the headline number isn't inflated by files you keep.
     pub fn reclaimable(&self) -> u64 {
         self.findings
             .iter()
-            .filter(|f| f.removable())
+            .filter(|f| !f.risky)
             .map(|f| f.size)
             .sum()
     }
@@ -74,7 +94,6 @@ pub fn apply(finding: &Finding) -> Result<u64> {
             exec::run(cmd)?;
             Ok(finding.size)
         }
-        CleanAction::ReadOnly => Ok(0),
     }
 }
 
@@ -83,20 +102,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn totals_split_read_only() {
+    fn reclaimable_excludes_risky() {
         let mut r = Report::new("t");
-        r.findings.push(Finding {
-            path: PathBuf::from("a"),
-            size: 10,
-            note: None,
-            action: CleanAction::RemovePath,
-        });
-        r.findings.push(Finding {
-            path: PathBuf::from("b"),
-            size: 5,
-            note: None,
-            action: CleanAction::ReadOnly,
-        });
+        r.findings.push(Finding::dir(
+            PathBuf::from("a"),
+            10,
+            CleanAction::RemovePath,
+        ));
+        r.findings
+            .push(Finding::dir(PathBuf::from("b"), 5, CleanAction::RemovePath).risky(true));
         assert_eq!(r.findings.len(), 2);
         assert_eq!(r.reclaimable(), 10);
     }
