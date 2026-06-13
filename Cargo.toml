@@ -1,0 +1,36 @@
+[package]
+name = "sweep"
+version = "0.1.0"
+edition = "2021"
+description = "Safe, interactive disk cleanup for macOS"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/luccinmasirika/sweep"
+keywords = ["cli", "cleanup", "disk", "macos", "cache"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "sweep"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.11"
+dirs = "5"
+humansize = "2"
+indicatif = "0.17"
+owo-colors = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+walkdir = "2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = true

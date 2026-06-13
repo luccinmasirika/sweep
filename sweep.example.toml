@@ -1,0 +1,28 @@
+# Copy to ./sweep.toml or ~/.config/sweep/config.toml.
+# Any field left out falls back to the built-in default.
+
+# Toggle whole targets on/off.
+caches = true
+dev_tools = true
+large_files = true
+node_modules = true
+
+# Directories emptied by the `caches` target.
+cache_dirs = [
+    "~/Library/Caches",
+    "~/Library/Logs",
+    "~/.Trash",
+]
+
+# Where `node-modules` searches for orphan dependency folders.
+scan_roots = ["~/Developer", "~/Documents"]
+
+# Directories inspected (read-only) by `large-files`.
+large_files_dirs = ["~/Documents", "~/Downloads"]
+
+# Show this many of the biggest entries per directory.
+large_files_top = 20
+
+# Flag downloads / projects untouched for this many days.
+downloads_stale_days = 90
+node_modules_stale_days = 60
