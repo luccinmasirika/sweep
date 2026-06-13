@@ -135,13 +135,16 @@ pub fn print_freed(freed: u64, before: Option<u64>, after: Option<u64>) {
     }
 }
 
-/// Shared menu theme with checkboxes that read clearly: filled green circle
-/// when ticked, hollow grey one when not.
+/// Shared menu theme: filled green circle when ticked, hollow grey one when
+/// not, and a bold cyan `❯` row so it's obvious where the cursor sits.
 fn menu_theme() -> ColorfulTheme {
-    use dialoguer::console::style;
+    use dialoguer::console::{style, Style};
     ColorfulTheme {
         checked_item_prefix: style("◉".to_string()).for_stderr().green(),
         unchecked_item_prefix: style("○".to_string()).for_stderr().dim(),
+        active_item_prefix: style("❯".to_string()).for_stderr().cyan().bold(),
+        inactive_item_prefix: style(" ".to_string()).for_stderr(),
+        active_item_style: Style::new().for_stderr().cyan().bold(),
         ..ColorfulTheme::default()
     }
 }
