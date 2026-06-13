@@ -147,21 +147,40 @@ fn menu_theme() -> ColorfulTheme {
     }
 }
 
-/// Interactive multi-select over the available targets. Everything starts
-/// checked, so pressing Enter keeps them all.
-pub fn select_targets(names: &[&str]) -> Result<Vec<usize>> {
-    let items: Vec<String> = names.iter().map(|n| format!("{} {n}", icon(n))).collect();
-    let defaults = vec![true; items.len()];
-    let selection = dialoguer::MultiSelect::with_theme(&menu_theme())
-        .with_prompt("Select targets (space to toggle, enter to confirm)")
-        .items(&items)
-        .defaults(&defaults)
-        .interact()?;
-    Ok(selection)
+pub enum Action {
+    All,
+    Choose,
+    Skip,
 }
 
-/// Interactive multi-select over a report's findings. Everything starts
-/// checked; returns the indices the user kept ticked.
+/// Action menu shown for one target. Arrow keys move, Enter runs the
+/// highlighted line, so there's no toggle-then-confirm to puzzle over.
+pub fn choose_action(target: &str, count: usize, total: u64, all_risky: bool) -> Result<Action> {
+    let items = [
+        format!("Clean all ({})", human(total)),
+        "Choose items…".to_string(),
+        "Skip".to_string(),
+    ];
+    // Default to Skip when everything here is personal, otherwise to Clean all.
+    let default = if all_risky { 2 } else { 0 };
+    println!(
+        "  {}",
+        format!("{count} items · {} · ↑/↓ then enter", human(total)).dimmed()
+    );
+    let choice = dialoguer::Select::with_theme(&menu_theme())
+        .with_prompt(format!("{} {}", icon(target), target.to_uppercase()))
+        .items(&items)
+        .default(default)
+        .interact()?;
+    Ok(match choice {
+        0 => Action::All,
+        1 => Action::Choose,
+        _ => Action::Skip,
+    })
+}
+
+/// Granular multi-select, reached only via "Choose items…". Safe items start
+/// ticked, personal ones unticked.
 pub fn select_findings(report: &Report) -> Result<Vec<usize>> {
     let items: Vec<String> = report
         .findings
@@ -172,8 +191,9 @@ pub fn select_findings(report: &Report) -> Result<Vec<usize>> {
         })
         .collect();
     let defaults: Vec<bool> = report.findings.iter().map(|f| !f.risky).collect();
+    println!("  {}", "↑/↓ move · space to tick · enter to apply".dimmed());
     let selection = dialoguer::MultiSelect::with_theme(&menu_theme())
-        .with_prompt(format!("Select what to clean in {}", report.target))
+        .with_prompt("Tick what to clean")
         .items(&items)
         .defaults(&defaults)
         .interact()?;

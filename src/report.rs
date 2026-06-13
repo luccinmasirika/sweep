@@ -73,6 +73,10 @@ impl Report {
             .sum()
     }
 
+    pub fn total_size(&self) -> u64 {
+        self.findings.iter().map(|f| f.size).sum()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.findings.is_empty()
     }

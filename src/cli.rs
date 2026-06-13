@@ -60,24 +60,11 @@ fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
-fn collect(cfg: &Config, only: &[String], interactive: bool) -> Result<Vec<Report>> {
-    let mut chosen: Vec<_> = targets::all()
+fn collect(cfg: &Config, only: &[String]) -> Result<Vec<Report>> {
+    let chosen = targets::all()
         .into_iter()
         .filter(|t| t.enabled(cfg))
-        .filter(|t| only.is_empty() || only.iter().any(|n| n == t.name()))
-        .collect();
-
-    if interactive && only.is_empty() && chosen.len() > 1 {
-        let names: Vec<&str> = chosen.iter().map(|t| t.name()).collect();
-        let picked: std::collections::HashSet<usize> =
-            ui::select_targets(&names)?.into_iter().collect();
-        let mut i = 0;
-        chosen.retain(|_| {
-            let keep = picked.contains(&i);
-            i += 1;
-            keep
-        });
-    }
+        .filter(|t| only.is_empty() || only.iter().any(|n| n == t.name()));
 
     let mut reports = Vec::new();
     for target in chosen {
@@ -90,7 +77,7 @@ fn collect(cfg: &Config, only: &[String], interactive: bool) -> Result<Vec<Repor
 }
 
 pub fn run_scan(cfg: &Config, json: bool, only: &[String]) -> Result<()> {
-    let reports = collect(cfg, only, !json && interactive())?;
+    let reports = collect(cfg, only)?;
     if json {
         ui::print_json(&reports)?;
     } else {
@@ -111,8 +98,11 @@ pub fn run_clean(
     cfg.aggressive = aggressive || volumes;
     cfg.prune_volumes = volumes;
 
+    // Without a terminal there's no one to drive the menus, so behave like --yes.
+    let guided = !yes && interactive();
+
     let before = fsutil::free_space_root();
-    let reports = collect(&cfg, only, !yes && interactive())?;
+    let reports = collect(&cfg, only)?;
     let mut freed: u64 = 0;
 
     for report in &reports {
@@ -121,22 +111,25 @@ pub fn run_clean(
         }
         ui::print_report(report);
 
-        let selected = if yes {
-            report
-                .findings
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| !f.risky)
-                .map(|(i, _)| i)
-                .collect()
+        let chosen: Vec<&Finding> = if guided {
+            let all_risky = report.findings.iter().all(|f| f.risky);
+            match ui::choose_action(
+                &report.target,
+                report.findings.len(),
+                report.total_size(),
+                all_risky,
+            )? {
+                ui::Action::Skip => continue,
+                ui::Action::All => report.findings.iter().collect(),
+                ui::Action::Choose => ui::select_findings(report)?
+                    .iter()
+                    .filter_map(|&i| report.findings.get(i))
+                    .collect(),
+            }
         } else {
-            ui::select_findings(report)?
+            report.findings.iter().filter(|f| !f.risky).collect()
         };
 
-        let chosen: Vec<&Finding> = selected
-            .iter()
-            .filter_map(|&i| report.findings.get(i))
-            .collect();
         if chosen.is_empty() {
             continue;
         }
