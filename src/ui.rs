@@ -125,6 +125,19 @@ pub fn print_freed(freed: u64, before: Option<u64>, after: Option<u64>) {
     }
 }
 
+/// Interactive multi-select over the available targets. Everything starts
+/// checked, so pressing Enter keeps them all.
+pub fn select_targets(names: &[&str]) -> Result<Vec<usize>> {
+    let items: Vec<String> = names.iter().map(|n| format!("{} {n}", icon(n))).collect();
+    let defaults = vec![true; items.len()];
+    let selection = dialoguer::MultiSelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select targets (space to toggle, enter to confirm)")
+        .items(&items)
+        .defaults(&defaults)
+        .interact()?;
+    Ok(selection)
+}
+
 /// Interactive multi-select over a report's findings. Everything starts
 /// checked; returns the indices the user kept ticked.
 pub fn select_findings(report: &Report) -> Result<Vec<usize>> {

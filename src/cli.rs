@@ -47,15 +47,32 @@ pub enum Command {
     Config,
 }
 
-fn collect(cfg: &Config, only: &[String]) -> Result<Vec<Report>> {
+fn interactive() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+fn collect(cfg: &Config, only: &[String], interactive: bool) -> Result<Vec<Report>> {
+    let mut chosen: Vec<_> = targets::all()
+        .into_iter()
+        .filter(|t| t.enabled(cfg))
+        .filter(|t| only.is_empty() || only.iter().any(|n| n == t.name()))
+        .collect();
+
+    if interactive && only.is_empty() && chosen.len() > 1 {
+        let names: Vec<&str> = chosen.iter().map(|t| t.name()).collect();
+        let picked: std::collections::HashSet<usize> =
+            ui::select_targets(&names)?.into_iter().collect();
+        let mut i = 0;
+        chosen.retain(|_| {
+            let keep = picked.contains(&i);
+            i += 1;
+            keep
+        });
+    }
+
     let mut reports = Vec::new();
-    for target in targets::all() {
-        if !target.enabled(cfg) {
-            continue;
-        }
-        if !only.is_empty() && !only.iter().any(|n| n == target.name()) {
-            continue;
-        }
+    for target in chosen {
         let spinner = ui::spinner(target.name());
         let report = target.scan(cfg)?;
         spinner.finish_and_clear();
@@ -65,7 +82,7 @@ fn collect(cfg: &Config, only: &[String]) -> Result<Vec<Report>> {
 }
 
 pub fn run_scan(cfg: &Config, json: bool, only: &[String]) -> Result<()> {
-    let reports = collect(cfg, only)?;
+    let reports = collect(cfg, only, !json && interactive())?;
     if json {
         ui::print_json(&reports)?;
     } else {
@@ -77,7 +94,7 @@ pub fn run_scan(cfg: &Config, json: bool, only: &[String]) -> Result<()> {
 
 pub fn run_clean(cfg: &Config, yes: bool, only: &[String]) -> Result<()> {
     let before = fsutil::free_space_root();
-    let reports = collect(cfg, only)?;
+    let reports = collect(cfg, only, !yes && interactive())?;
     let mut freed: u64 = 0;
 
     for report in &reports {
