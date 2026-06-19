@@ -16,10 +16,19 @@ and are never removed by `--yes`.
 ## Install
 
 ```sh
+# Homebrew (builds from source — no notarization needed)
+brew install luccinmasirika/tap/sweep
+
+# From crates.io
+cargo install sweep
+
+# From a clone
 cargo install --path .
 ```
 
-This builds an optimized `sweep` binary into `~/.cargo/bin`.
+Each builds an optimized `sweep` binary (Homebrew/crates.io install it on your
+`PATH`; the clone puts it in `~/.cargo/bin`). Prebuilt universal-binary tarballs
+are also attached to each [GitHub release](https://github.com/luccinmasirika/sweep/releases).
 
 ## Usage
 
@@ -27,12 +36,26 @@ This builds an optimized `sweep` binary into `~/.cargo/bin`.
 sweep scan                 # analyse only, delete nothing
 sweep scan --json          # same, as machine-readable JSON
 sweep clean                # free space, confirming before each target
-sweep clean --yes          # skip the prompts
+sweep clean --yes          # skip the prompts (only safe, idle items)
 sweep clean --only projects,app-caches
 sweep clean --aggressive   # prune all unused Docker images, heavier dev caches
-sweep doctor               # diagnose where space is going (read-only)
+sweep clean --purge        # delete removable items outright instead of trashing
+sweep smart                # scan everything, then clean what's safe — one step
+sweep explore [DIR]        # browse what's big and trash it interactively
+sweep dupes [DIR]          # find byte-identical duplicates and trash extras
+sweep uninstall <App>      # remove an app and its whole footprint
+sweep maintenance          # flush DNS, rebuild Spotlight, reset Launch Services…
+sweep doctor               # diagnose where space is going
+sweep doctor --fix         # also delete APFS local snapshots and empty every Trash
+sweep schedule install     # run `sweep smart` on a recurring launchd schedule
 sweep config               # print the effective configuration
 ```
+
+Removable items (project dirs, big files) are **moved to the Trash** so a
+mistake is undoable with Finder's "Put Back"; empty the Trash to reclaim the
+space, or pass `--purge` to delete immediately. Pure caches are always deleted
+outright. `--yes` only touches safe, idle items — never personal files or
+projects that still look active.
 
 ## What it detects
 
@@ -42,11 +65,20 @@ sweep config               # print the effective configuration
 | `app-caches`    | Cache-named dirs discovered under Application Support / Containers.       |
 | `dev-tools`     | `brew`/npm/pnpm/yarn + cargo/pip caches, `docker prune` (tools present).  |
 | `xcode`         | DerivedData, device support, simulators, archives, iOS backups.          |
-| `projects`      | Deep home walk for regenerable build/dep dirs (`node_modules`, `target`…). |
+| `projects`      | Marker-aware home walk: project artifacts (`node_modules`, `target`, `build`…). |
 | `large-items`   | Biggest personal files/folders over a threshold (start unchecked).       |
+| `privacy`       | Browser caches (safe) + cookies/history (start unchecked) + Mail downloads. |
+| `leftovers`     | Support files of uninstalled apps (opt-in; heuristic, starts unchecked). |
 
 Nothing is hard-coded to a particular machine: detectors resolve known paths
 relative to your home and discover the rest by scanning.
+
+The `projects` walk skips version-manager and toolchain roots (`~/.nvm`,
+`~/.fnm`, `~/.volta`, `~/.asdf`, `~/.cargo`, `~/.rustup`, …) so a global
+`node_modules` is never swept, and as a last line of defence `sweep` refuses to
+delete any path belonging to a toolchain currently on your `PATH`. It also stays
+out of app/library bundles (`.app`, `.photoslibrary`, …) and skips evicted
+iCloud files so sizing one never forces a download.
 
 ### Aggressive mode
 

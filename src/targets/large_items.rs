@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
@@ -31,17 +30,23 @@ impl Target for LargeItems {
             };
             for entry in entries.flatten() {
                 let path = entry.path();
-                let size = if path.is_dir() {
+                // lstat, not stat: never follow a symlink into its target and
+                // never materialise an evicted iCloud file just by sizing it.
+                let Ok(meta) = entry.metadata() else { continue };
+                if is_dataless(&meta) {
+                    continue;
+                }
+                let size = if meta.is_dir() {
                     fsutil::dir_size(&path)
                 } else {
-                    path.metadata().map(|m| m.len()).unwrap_or(0)
+                    meta.len()
                 };
                 if size < cfg.large_min_bytes {
                     continue;
                 }
                 let mut finding =
                     Finding::dir(path.clone(), size, CleanAction::RemovePath).risky(true);
-                if older_than(&path, stale) {
+                if older_than(&meta, stale) {
                     finding =
                         finding.with_note(format!("untouched > {}d", cfg.downloads_stale_days));
                 }
@@ -56,8 +61,8 @@ impl Target for LargeItems {
     }
 }
 
-fn older_than(path: &Path, age: Duration) -> bool {
-    let modified = match path.metadata().and_then(|m| m.modified()) {
+fn older_than(meta: &fs::Metadata, age: Duration) -> bool {
+    let modified = match meta.modified() {
         Ok(t) => t,
         Err(_) => return false,
     };
@@ -65,4 +70,20 @@ fn older_than(path: &Path, age: Duration) -> bool {
         .duration_since(modified)
         .map(|elapsed| elapsed > age)
         .unwrap_or(false)
+}
+
+/// An iCloud file evicted from local storage: it reports its full size but
+/// holds almost nothing on disk, and deleting the placeholder would remove the
+/// real file from the cloud. Checked via `lstat` flags so we don't trigger a
+/// download.
+#[cfg(target_os = "macos")]
+fn is_dataless(meta: &fs::Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    const SF_DATALESS: u32 = 0x4000_0000;
+    meta.st_flags() & SF_DATALESS != 0
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_dataless(_: &fs::Metadata) -> bool {
+    false
 }

@@ -8,12 +8,17 @@ dev_tools = true
 xcode = true
 projects = true
 large_items = true
+privacy = true
+# Leftovers (support files of uninstalled apps) is heuristic, so it is opt-in.
+leftovers = false
 
 # Where to look. Defaults to your home directory; override mainly for testing.
 # home = "~"
 
-# Extra path prefixes to skip during the deep home walk (on top of ~/Library
-# and ~/.Trash, which are always skipped).
+# Extra path prefixes to skip during the deep home walk. Always skipped on top
+# of these: ~/Library, ~/.Trash, and version-manager / toolchain roots like
+# ~/.nvm, ~/.fnm, ~/.volta, ~/.asdf, ~/.cargo and ~/.rustup — so a global
+# node_modules (which holds npm itself) is never mistaken for project junk.
 exclude = []
 
 # Regenerable build/dependency directory names the `projects` scan deletes.

@@ -27,7 +27,7 @@ impl Target for AppCaches {
             cfg.home.join("Library/Containers"),
         ];
         let mut report = Report::new(self.name());
-        report.findings = find_dirs(&roots, CACHE_NAMES, Duration::MAX, &[]);
+        report.findings = find_dirs(&roots, CACHE_NAMES, &[], Duration::MAX, &[]);
         report.findings.retain(|f| f.size >= cfg.min_dir_bytes);
         Ok(report)
     }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use super::Target;
+use crate::catalog;
 use crate::config::Config;
 use crate::exec;
 use crate::fsutil;
@@ -29,6 +30,7 @@ impl Target for DevTools {
                 finding = finding.with_note(note);
             }
             f.push(finding);
+            f.push(command_finding("Homebrew orphans", &["brew", "autoremove"]));
         }
 
         if exec::command_exists("npm") {
@@ -92,6 +94,35 @@ impl Target for DevTools {
             );
         }
 
+        if exec::command_exists("bun") {
+            f.push(command_finding("bun cache", &["bun", "pm", "cache", "rm"]));
+        }
+
+        if exec::command_exists("uv") {
+            f.push(command_finding("uv cache", &["uv", "cache", "clean"]));
+        }
+
+        if exec::command_exists("composer") {
+            f.push(command_finding(
+                "composer cache",
+                &["composer", "clear-cache"],
+            ));
+        }
+
+        if exec::command_exists("conda") {
+            f.push(command_finding(
+                "conda packages",
+                &["conda", "clean", "-a", "-y"],
+            ));
+        }
+
+        if exec::command_exists("xcrun") {
+            f.push(command_finding(
+                "unavailable simulators",
+                &["xcrun", "simctl", "delete", "unavailable"],
+            ));
+        }
+
         if exec::command_exists("docker") {
             let label = if cfg.aggressive {
                 "Docker (all unused images & networks)"
@@ -108,6 +139,8 @@ impl Target for DevTools {
             }
             f.push(finding);
         }
+
+        f.extend(catalog::dev_caches(&cfg.home));
 
         Ok(report)
     }

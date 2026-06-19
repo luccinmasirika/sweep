@@ -25,6 +25,10 @@ pub struct Finding {
     /// removed by `--yes`; deleting it takes a deliberate tick.
     #[serde(default)]
     pub risky: bool,
+    /// Old enough to clean without a second thought. Caches are always stale;
+    /// a project still in active use is not, so it is left unticked by default
+    /// and skipped under `--yes`. True for findings that don't age.
+    pub stale: bool,
 }
 
 impl Finding {
@@ -35,6 +39,7 @@ impl Finding {
             note: None,
             action,
             risky: false,
+            stale: true,
         }
     }
 
@@ -45,6 +50,11 @@ impl Finding {
 
     pub fn risky(mut self, risky: bool) -> Self {
         self.risky = risky;
+        self
+    }
+
+    pub fn stale(mut self, stale: bool) -> Self {
+        self.stale = stale;
         self
     }
 }
@@ -82,12 +92,13 @@ impl Report {
     }
 }
 
-/// Runs a finding's action and returns the bytes freed. For commands the
-/// figure is the estimate we computed at scan time, not a measured value.
-pub fn apply(finding: &Finding) -> Result<u64> {
+/// Runs a finding's action and returns the bytes it accounts for. For commands
+/// the figure is the estimate we computed at scan time, not a measured value.
+/// `purge` forces a real delete for `RemovePath` instead of a move to Trash.
+pub fn apply(finding: &Finding, purge: bool) -> Result<u64> {
     match &finding.action {
         CleanAction::RemovePath => {
-            fsutil::remove_path(&finding.path)?;
+            fsutil::remove_path(&finding.path, purge)?;
             Ok(finding.size)
         }
         CleanAction::EmptyDir => {

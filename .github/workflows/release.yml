@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build both architectures
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Make a universal binary
+        run: |
+          mkdir -p dist
+          lipo -create -output dist/sweep \
+            target/aarch64-apple-darwin/release/sweep \
+            target/x86_64-apple-darwin/release/sweep
+          tar -czf dist/sweep-macos-universal.tar.gz -C dist sweep
+          shasum -a 256 dist/sweep-macos-universal.tar.gz \
+            > dist/sweep-macos-universal.tar.gz.sha256
+
+      # Optional notarization: set APPLE_* secrets to sign with a Developer ID
+      # and submit via notarytool. Left out by default — the Homebrew formula
+      # builds from source, which Gatekeeper accepts without notarization.
+
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/sweep-macos-universal.tar.gz
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/sweep-macos-universal.tar.gz
+            dist/sweep-macos-universal.tar.gz.sha256

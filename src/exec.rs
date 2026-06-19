@@ -7,7 +7,7 @@ pub fn command_exists(name: &str) -> bool {
     which(name).is_some()
 }
 
-fn which(name: &str) -> Option<PathBuf> {
+pub fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|dir| dir.join(name))

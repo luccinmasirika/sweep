@@ -69,6 +69,112 @@ pub fn system_caches(cfg: &Config) -> Vec<Finding> {
     )
 }
 
+/// Global, fixed-location developer caches (package managers, editors, mobile
+/// SDKs). All regenerable; the only `risky` one is a slow multi-GB re-download.
+pub fn dev_caches(home: &Path) -> Vec<Finding> {
+    resolve(
+        home,
+        &[
+            Entry {
+                rel: "Library/Caches/go-build",
+                action: Action::Empty,
+                note: Some("go build cache"),
+                risky: false,
+            },
+            Entry {
+                rel: ".m2/repository",
+                action: Action::Empty,
+                note: Some("maven repository"),
+                risky: false,
+            },
+            Entry {
+                rel: ".gradle/caches",
+                action: Action::Empty,
+                note: Some("gradle caches"),
+                risky: false,
+            },
+            Entry {
+                rel: ".pub-cache",
+                action: Action::Empty,
+                note: Some("dart/flutter pub cache"),
+                risky: false,
+            },
+            Entry {
+                rel: ".nuget/packages",
+                action: Action::Empty,
+                note: Some("nuget packages"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Caches/ms-playwright",
+                action: Action::Empty,
+                note: Some("playwright browsers"),
+                risky: false,
+            },
+            Entry {
+                rel: ".cache/puppeteer",
+                action: Action::Empty,
+                note: Some("puppeteer browsers"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Caches/Cypress",
+                action: Action::Empty,
+                note: Some("cypress binaries"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Caches/CocoaPods",
+                action: Action::Empty,
+                note: Some("cocoapods cache"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Caches/JetBrains",
+                action: Action::Empty,
+                note: Some("jetbrains caches"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Logs/JetBrains",
+                action: Action::Empty,
+                note: Some("jetbrains logs"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Application Support/Code/Cache",
+                action: Action::Empty,
+                note: Some("vs code cache"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Application Support/Code/CachedData",
+                action: Action::Empty,
+                note: Some("vs code cached data"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Application Support/Code/Code Cache",
+                action: Action::Empty,
+                note: Some("vs code code cache"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Application Support/Code/GPUCache",
+                action: Action::Empty,
+                note: Some("vs code gpu cache"),
+                risky: false,
+            },
+            Entry {
+                rel: "Library/Android/sdk/system-images",
+                action: Action::Remove,
+                note: Some("android system images — slow re-download"),
+                risky: true,
+            },
+        ],
+    )
+}
+
 pub fn xcode(cfg: &Config) -> Vec<Finding> {
     resolve(
         &cfg.home,

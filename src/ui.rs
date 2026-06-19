@@ -57,6 +57,8 @@ fn icon(target: &str) -> &'static str {
         "xcode" => "🔨",
         "projects" => "🏗 ",
         "large-items" => "📄",
+        "leftovers" => "👻",
+        "privacy" => "🕵 ",
         _ => "•",
     }
 }
@@ -97,6 +99,9 @@ pub fn print_report(report: &Report) {
         let mut tail = String::new();
         if f.risky {
             tail.push_str(&format!("{} ", "⚠ personal".red()));
+        }
+        if !f.stale {
+            tail.push_str(&format!("{} ", "active".cyan()));
         }
         if let Some(note) = &f.note {
             tail.push_str(&format!("({note})").yellow().to_string());
@@ -158,10 +163,19 @@ pub fn clean_progress(len: u64) -> ProgressBar {
     pb
 }
 
-pub fn print_freed(freed: u64, before: Option<u64>, after: Option<u64>) {
+pub fn print_freed(freed: u64, trashed: u64, before: Option<u64>, after: Option<u64>) {
     println!();
     println!("{} {}", "✓".green().bold(), "Done".bold());
-    println!("   freed       {}", human(freed).green().bold());
+    if freed > 0 || trashed == 0 {
+        println!("   freed       {}", human(freed).green().bold());
+    }
+    if trashed > 0 {
+        println!(
+            "   to Trash    {}  {}",
+            human(trashed).yellow().bold(),
+            "(empty the Trash to reclaim it)".dimmed()
+        );
+    }
     if let (Some(b), Some(a)) = (before, after) {
         println!("   free on /   {} → {}", human(b).dimmed(), human(a).bold());
     }
@@ -169,7 +183,7 @@ pub fn print_freed(freed: u64, before: Option<u64>, after: Option<u64>) {
 
 /// Shared menu theme: filled green circle when ticked, hollow grey one when
 /// not, and a solid cyan bar on the focused row so the cursor is unmistakable.
-fn menu_theme() -> ColorfulTheme {
+pub fn menu_theme() -> ColorfulTheme {
     use dialoguer::console::{style, Style};
     ColorfulTheme {
         checked_item_prefix: style("◉".to_string()).for_stderr().green(),
@@ -187,14 +201,20 @@ pub enum Action {
 
 /// Action menu shown for one target. Arrow keys move, Enter runs the
 /// highlighted line, so there's no toggle-then-confirm to puzzle over.
-pub fn choose_action(target: &str, count: usize, total: u64, all_risky: bool) -> Result<Action> {
+pub fn choose_action(
+    target: &str,
+    count: usize,
+    total: u64,
+    all_default_off: bool,
+) -> Result<Action> {
     let items = [
         format!("Clean all ({})", human(total)),
         "Choose items…".to_string(),
         "Skip".to_string(),
     ];
-    // Default to Skip when everything here is personal, otherwise to Clean all.
-    let default = if all_risky { 2 } else { 0 };
+    // Default to Skip when nothing here is a safe default (all personal or
+    // still-active), otherwise to Clean all.
+    let default = if all_default_off { 2 } else { 0 };
     println!(
         "  {}",
         format!("{count} items · {} · ↑/↓ then enter", human(total)).dimmed()
@@ -222,7 +242,11 @@ pub fn select_findings(report: &Report) -> Result<Vec<usize>> {
             None => format!("{}  {}", human(f.size), pretty_path(&f.path)),
         })
         .collect();
-    let defaults: Vec<bool> = report.findings.iter().map(|f| !f.risky).collect();
+    let defaults: Vec<bool> = report
+        .findings
+        .iter()
+        .map(|f| !f.risky && f.stale)
+        .collect();
     println!("  {}", "↑/↓ move · space to tick · enter to apply".dimmed());
     let selection = dialoguer::MultiSelect::with_theme(&menu_theme())
         .with_prompt("Tick what to clean")
@@ -230,6 +254,14 @@ pub fn select_findings(report: &Report) -> Result<Vec<usize>> {
         .defaults(&defaults)
         .interact()?;
     Ok(selection)
+}
+
+/// Yes/no prompt, defaulting to no so a stray Enter never deletes anything.
+pub fn confirm(prompt: &str) -> Result<bool> {
+    Ok(dialoguer::Confirm::with_theme(&menu_theme())
+        .with_prompt(prompt)
+        .default(false)
+        .interact()?)
 }
 
 pub fn ok(msg: &str) {

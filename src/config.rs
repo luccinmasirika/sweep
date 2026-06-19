@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Everything is derived from `home`, so the tool works with no config at all.
@@ -14,6 +14,9 @@ pub struct Config {
     pub xcode: bool,
     pub projects: bool,
     pub large_items: bool,
+    pub privacy: bool,
+    /// Off by default: leftovers detection is heuristic, so it is opt-in.
+    pub leftovers: bool,
 
     pub home: PathBuf,
     /// Extra path prefixes to skip during the deep home walk.
@@ -45,6 +48,8 @@ impl Default for Config {
             xcode: true,
             projects: true,
             large_items: true,
+            privacy: true,
+            leftovers: false,
             home: dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
             exclude: Vec::new(),
             project_dir_names: default_project_dir_names(),
@@ -61,21 +66,66 @@ impl Default for Config {
 
 fn default_project_dir_names() -> Vec<String> {
     [
+        // JS / web
         "node_modules",
-        "target",
         ".next",
         ".nuxt",
         ".svelte-kit",
         ".turbo",
         ".parcel-cache",
-        ".gradle",
-        "Pods",
+        ".angular",
+        ".expo",
+        ".metro",
+        // Rust / Maven
+        "target",
+        // Python
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
         "venv",
         ".venv",
+        // JVM / mobile
+        ".gradle",
+        "Pods",
+        ".dart_tool",
+        // Misc toolchains
+        ".terraform",
+        "dist-newstyle",
+        ".stack-work",
+        "zig-cache",
+        ".zig-cache",
+        ".swiftpm",
+        ".ipynb_checkpoints",
+        ".pixi",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect()
+}
+
+/// Version-manager and toolchain roots under `home` the projects walk must
+/// never enter, so a global `node_modules`, `venv`, or build dir living inside
+/// one is never mistaken for a project's regenerable junk.
+fn default_prune_dirs() -> &'static [&'static str] {
+    &[
+        ".nvm",
+        ".fnm",
+        ".volta",
+        ".n",
+        ".asdf",
+        ".rbenv",
+        ".pyenv",
+        ".rustup",
+        ".cargo",
+        ".bun",
+        ".deno",
+        ".gem",
+        "go",
+        ".local/share/fnm",
+        ".local/share/mise",
+    ]
 }
 
 impl Config {
@@ -90,10 +140,23 @@ impl Config {
                     .with_context(|| format!("reading {}", p.display()))?;
                 let cfg: Config =
                     toml::from_str(&raw).with_context(|| format!("parsing {}", p.display()))?;
-                Ok(cfg.expanded())
+                cfg.expanded().validated()
             }
-            _ => Ok(Self::default()),
+            _ => Self::default().validated(),
         }
+    }
+
+    /// Guard against a `home` that would turn the deep walk into a whole-disk
+    /// rampage — an empty value, the filesystem root, or a non-directory.
+    fn validated(self) -> Result<Self> {
+        let home = &self.home;
+        if home.as_os_str().is_empty() || home == Path::new("/") {
+            bail!("refusing to run with home = {:?}: too broad", home);
+        }
+        if !home.is_dir() {
+            bail!("home {:?} is not an existing directory", home);
+        }
+        Ok(self)
     }
 
     /// Standard folders scanned for large items, plus any user-provided extras.
@@ -106,9 +169,13 @@ impl Config {
         roots
     }
 
-    /// Path prefixes never descended into during the deep home walk.
+    /// Path prefixes never descended into during the deep home walk. Beyond
+    /// `Library` and the trash, this covers version managers and language
+    /// toolchains whose global installs sit under `home` — wiping a
+    /// `node_modules` inside `~/.nvm/.../lib` would take npm down with it.
     pub fn prune_prefixes(&self) -> Vec<PathBuf> {
         let mut p = vec![self.home.join("Library"), self.home.join(".Trash")];
+        p.extend(default_prune_dirs().iter().map(|d| self.home.join(d)));
         p.extend(self.exclude.iter().cloned());
         p
     }
@@ -159,6 +226,28 @@ mod tests {
     }
 
     #[test]
+    fn validated_rejects_dangerous_homes() {
+        let root = Config {
+            home: PathBuf::from("/"),
+            ..Default::default()
+        };
+        assert!(root.validated().is_err());
+
+        let missing = Config {
+            home: PathBuf::from("/nonexistent-sweep-home-xyz"),
+            ..Default::default()
+        };
+        assert!(missing.validated().is_err());
+
+        let dir = tempfile::tempdir().unwrap();
+        let ok = Config {
+            home: dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        assert!(ok.validated().is_ok());
+    }
+
+    #[test]
     fn roots_derive_from_home() {
         let c = Config {
             home: PathBuf::from("/tmp/fakehome"),
@@ -170,5 +259,11 @@ mod tests {
         assert!(c
             .prune_prefixes()
             .contains(&PathBuf::from("/tmp/fakehome/Library")));
+        assert!(c
+            .prune_prefixes()
+            .contains(&PathBuf::from("/tmp/fakehome/.nvm")));
+        assert!(c
+            .prune_prefixes()
+            .contains(&PathBuf::from("/tmp/fakehome/.cargo")));
     }
 }

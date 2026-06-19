@@ -2,6 +2,7 @@
 name = "sweep"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 description = "Safe, interactive disk cleanup for macOS"
 license = "MIT"
 readme = "README.md"
@@ -16,14 +17,17 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+blake3 = "1"
 dialoguer = "0.11"
 dirs = "5"
 humansize = "2"
 indicatif = "0.17"
+jwalk = "0.8"
 owo-colors = "4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+trash = "5"
 walkdir = "2"
 
 [dev-dependencies]
