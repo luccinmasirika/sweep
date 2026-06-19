@@ -4,7 +4,28 @@
 
 import type { Api } from "../api";
 import type { Report } from "../types";
-import { button, card, formatBytes, spinner, toast } from "../components";
+import { button, card, formatBytes, icon, spinner, toast } from "../components";
+
+// Reuse the last scan across navigations so returning to the dashboard is
+// instant; "Rescan" forces a fresh walk.
+let cachedSummary: ScanSummary | null = null;
+
+const TARGET_ICON: Record<string, string> = {
+  "system-caches": "cleanup",
+  "app-caches": "cleanup",
+  "dev-tools": "applications",
+  xcode: "applications",
+  projects: "files",
+  "large-items": "files",
+  privacy: "privacy",
+  leftovers: "applications",
+  logs: "maintenance",
+  trash: "trash",
+};
+
+function iconFor(target: string): string {
+  return TARGET_ICON[target] ?? "broom";
+}
 
 type Phase = "idle" | "scanning" | "scanned" | "cleaning" | "cleaned" | "error";
 
@@ -160,6 +181,7 @@ export function renderDashboard(root: HTMLElement, api: Api): void {
           <span class="chip-size"></span>
         </span>
         <span class="chip-bar" aria-hidden="true"><span class="chip-bar-fill"></span></span>`;
+      chip.querySelector(".chip-dot")!.appendChild(icon(iconFor(cat.target), { size: 15 }));
       chip.querySelector(".chip-label")!.textContent = meta.label;
       chip.querySelector(".chip-size")!.textContent = formatBytes(cat.bytes);
       const fill = chip.querySelector<HTMLElement>(".chip-bar-fill")!;
@@ -231,6 +253,7 @@ export function renderDashboard(root: HTMLElement, api: Api): void {
     try {
       const reports = await api.scan([]);
       summary = summarize(reports);
+      cachedSummary = summary;
       phase = "scanned";
       ringScene.classList.remove("is-scanning");
 
@@ -301,6 +324,7 @@ export function renderDashboard(root: HTMLElement, api: Api): void {
       ringScene.classList.add("is-done");
       setRing(1);
       summary = { total: 0, categories: [] };
+      cachedSummary = summary;
 
       await animateTo(result.freed > 0 ? result.freed : result.trashed, 900);
       const parts: string[] = [];
@@ -343,8 +367,28 @@ export function renderDashboard(root: HTMLElement, api: Api): void {
   );
   renderActions();
 
-  // Kick off automatically — the dashboard is the first thing a user sees.
-  void runScan();
+  // Restore the last scan instantly if we have one; otherwise kick off a fresh
+  // scan since the dashboard is the first thing a user sees.
+  if (cachedSummary) {
+    summary = cachedSummary;
+    phase = "scanned";
+    ringScene.classList.add("is-done");
+    setRing(1);
+    setBig(summary.total);
+    if (summary.total > 0) {
+      setCaption(
+        `<span class="dash-status">Reclaimable across <strong>${summary.categories.length}</strong> ${
+          summary.categories.length === 1 ? "category" : "categories"
+        }</span>`
+      );
+    } else {
+      setCaption(`<span class="dash-status ok">You're all clean.</span>`);
+    }
+    renderChips();
+    renderActions();
+  } else {
+    void runScan();
+  }
 }
 
 // --- helpers -----------------------------------------------------------------
@@ -649,12 +693,16 @@ const CSS = `
   background: var(--surface-2);
 }
 .chip-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--chip-color);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--chip-color) 60%, transparent);
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--chip-color);
+  background: color-mix(in srgb, var(--chip-color) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip-color) 30%, transparent);
 }
+.chip-dot svg { display: block; }
 .chip-body { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .chip-label { font-size: 14px; font-weight: 600; color: var(--text); }
 .chip-size { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }

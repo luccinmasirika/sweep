@@ -3,13 +3,34 @@
 
 import type { Api } from "./api";
 import { routes, navigate, DEFAULT_ROUTE, resolveRoute } from "./router";
+import { icon } from "./components";
+import logoMark from "./assets/logo.svg?raw";
 
 export interface Shell {
   host: HTMLElement;
   select(id: string): void;
 }
 
+function injectShellStyles(): void {
+  if (document.getElementById("shell-icon-styles")) return;
+  const style = document.createElement("style");
+  style.id = "shell-icon-styles";
+  style.textContent = `
+    .sidebar-brand { display: flex; align-items: center; gap: 10px; }
+    .brand-logo { width: 26px; height: 26px; display: inline-flex; }
+    .brand-logo svg { width: 100%; height: 100%; display: block; }
+    .nav-item { display: flex; align-items: center; gap: 11px; }
+    .nav-icon { flex: 0 0 auto; display: inline-flex; color: var(--text-dim); transition: color 160ms ease; }
+    .nav-icon svg { display: block; }
+    .nav-item:hover .nav-icon { color: var(--text); }
+    .nav-item.is-active .nav-icon { color: var(--accent-2); }
+    .nav-label { flex: 1 1 auto; text-align: left; }
+  `;
+  document.head.appendChild(style);
+}
+
 export function mountShell(mount: HTMLElement, api: Api): Shell {
+  injectShellStyles();
   mount.replaceChildren();
 
   const layout = document.createElement("div");
@@ -21,7 +42,7 @@ export function mountShell(mount: HTMLElement, api: Api): Shell {
   const brand = document.createElement("div");
   brand.className = "sidebar-brand";
   brand.setAttribute("data-tauri-drag-region", "");
-  brand.innerHTML = `<span class="brand-mark">Sweep</span>`;
+  brand.innerHTML = `<span class="brand-logo" aria-hidden="true">${logoMark}</span><span class="brand-mark">Sweep</span>`;
   sidebar.appendChild(brand);
 
   const nav = document.createElement("nav");
@@ -34,7 +55,11 @@ export function mountShell(mount: HTMLElement, api: Api): Shell {
     btn.type = "button";
     btn.className = "nav-item";
     btn.dataset.route = route.id;
-    btn.textContent = route.label;
+    const ic = icon(route.icon, { size: 18, className: "nav-icon" });
+    const label = document.createElement("span");
+    label.className = "nav-label";
+    label.textContent = route.label;
+    btn.append(ic, label);
     btn.addEventListener("click", () => select(route.id));
     buttons.set(route.id, btn);
     nav.appendChild(btn);

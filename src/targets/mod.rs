@@ -59,7 +59,7 @@ pub trait Target {
     fn scan(&self, cfg: &Config) -> Result<Report>;
 }
 
-pub fn all() -> Vec<Box<dyn Target>> {
+pub fn all() -> Vec<Box<dyn Target + Send + Sync>> {
     vec![
         Box::new(system_caches::SystemCaches),
         Box::new(app_caches::AppCaches),

@@ -14,7 +14,26 @@ use crate::apps::{self, App};
 use crate::config::Config;
 use crate::fsutil::{self, Diagnosis};
 use crate::report::{Finding, Report};
-use crate::{cli, dupes, explore, maintenance, schedule, uninstall};
+use crate::{cli, dupes, explore, maintenance, schedule, targets, uninstall};
+
+/// Scan the enabled (and, if `only` is non-empty, named) targets concurrently.
+/// Each target's walk is heavy and independent, so running them on their own
+/// threads cuts wall-clock to the slowest one instead of their sum.
+fn scan_parallel(cfg: &Config, only: &[String]) -> Result<Vec<Report>> {
+    let chosen: Vec<_> = targets::all()
+        .into_iter()
+        .filter(|t| t.enabled(cfg))
+        .filter(|t| only.is_empty() || only.iter().any(|n| n == t.name()))
+        .collect();
+
+    std::thread::scope(|s| {
+        let handles: Vec<_> = chosen.iter().map(|t| s.spawn(|| t.scan(cfg))).collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("target scan thread panicked"))
+            .collect()
+    })
+}
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -73,14 +92,14 @@ pub struct ActionResult {
 /// enabled target; otherwise it restricts to the named ones.
 pub fn scan(only: Vec<String>) -> Result<Vec<Report>> {
     let cfg = Config::load(None)?;
-    cli::collect(&cfg, &only)
+    scan_parallel(&cfg, &only)
 }
 
 /// Re-scan every enabled target, keep the findings whose path string is in
 /// `paths`, and apply each. Removable items go to the Trash unless `purge`.
 pub fn clean(paths: Vec<String>, purge: bool) -> Result<CleanResult> {
     let cfg = Config::load(None)?;
-    let reports = cli::collect(&cfg, &[])?;
+    let reports = scan_parallel(&cfg, &[])?;
     let chosen: Vec<&Finding> = reports
         .iter()
         .flat_map(|r| r.findings.iter())
@@ -98,7 +117,7 @@ pub fn clean(paths: Vec<String>, purge: bool) -> Result<CleanResult> {
 /// active projects — exactly as `sweep smart --yes`.
 pub fn smart_clean(purge: bool) -> Result<CleanResult> {
     let cfg = Config::load(None)?;
-    let reports = cli::collect(&cfg, &[])?;
+    let reports = scan_parallel(&cfg, &[])?;
     let safe: Vec<&Finding> = reports
         .iter()
         .flat_map(|r| r.findings.iter().filter(|f| !f.risky && f.stale))
@@ -165,7 +184,7 @@ pub fn uninstall(query: String, purge: bool) -> Result<CleanResult> {
 /// (cookies/history) carry the `risky` flag so the UI can leave them unticked.
 pub fn privacy() -> Result<Vec<Finding>> {
     let cfg = Config::load(None)?;
-    let reports = cli::collect(&cfg, &["privacy".to_string()])?;
+    let reports = scan_parallel(&cfg, &["privacy".to_string()])?;
     Ok(reports.into_iter().flat_map(|r| r.findings).collect())
 }
 

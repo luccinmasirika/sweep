@@ -16,18 +16,19 @@ export type RenderFn = (root: HTMLElement, api: Api) => void;
 export interface Route {
   id: string;
   label: string;
+  icon: string;
   render: RenderFn;
 }
 
 export const routes: Route[] = [
-  { id: "dashboard", label: "Smart Scan", render: renderDashboard },
-  { id: "cleanup", label: "Cleanup", render: renderCleanup },
-  { id: "applications", label: "Applications", render: renderApplications },
-  { id: "privacy", label: "Privacy", render: renderPrivacy },
-  { id: "files", label: "Files", render: renderFiles },
-  { id: "spacelens", label: "Space Lens", render: renderSpacelens },
-  { id: "maintenance", label: "Maintenance", render: renderMaintenance },
-  { id: "schedule", label: "Schedule", render: renderSchedule },
+  { id: "dashboard", label: "Smart Scan", icon: "dashboard", render: renderDashboard },
+  { id: "cleanup", label: "Cleanup", icon: "cleanup", render: renderCleanup },
+  { id: "applications", label: "Applications", icon: "applications", render: renderApplications },
+  { id: "privacy", label: "Privacy", icon: "privacy", render: renderPrivacy },
+  { id: "files", label: "Files", icon: "files", render: renderFiles },
+  { id: "spacelens", label: "Space Lens", icon: "spacelens", render: renderSpacelens },
+  { id: "maintenance", label: "Maintenance", icon: "maintenance", render: renderMaintenance },
+  { id: "schedule", label: "Schedule", icon: "schedule", render: renderSchedule },
 ];
 
 const DEFAULT_ROUTE = "dashboard";
