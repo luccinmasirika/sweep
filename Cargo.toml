@@ -10,6 +10,10 @@ repository = "https://github.com/luccinmasirika/sweep"
 keywords = ["cli", "cleanup", "disk", "macos", "cache"]
 categories = ["command-line-utilities"]
 
+[lib]
+name = "sweep"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sweep"
 path = "src/main.rs"

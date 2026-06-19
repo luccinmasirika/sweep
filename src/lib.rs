@@ -1,0 +1,16 @@
+pub mod apps;
+pub mod catalog;
+pub mod cli;
+pub mod config;
+pub mod dupes;
+pub mod exec;
+pub mod explore;
+pub mod fsutil;
+pub mod gui_api;
+pub mod maintenance;
+pub mod report;
+pub mod schedule;
+pub mod smart;
+pub mod targets;
+pub mod ui;
+pub mod uninstall;

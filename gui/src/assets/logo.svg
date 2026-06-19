@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none">
+  <defs>
+    <linearGradient id="sweepLogoGrad" x1="6" y1="6" x2="42" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6d5cff"/>
+      <stop offset="1" stop-color="#00d4ff"/>
+    </linearGradient>
+  </defs>
+  <!-- The sweep arc: a clean stroke curving up, with motion particles trailing it. -->
+  <path d="M11 33c0-9 6-17 16-19" stroke="url(#sweepLogoGrad)" stroke-width="3.4" stroke-linecap="round"/>
+  <!-- The broom head sweeping along the arc. -->
+  <path d="M27 14l9-3 1 9-9 3z" fill="url(#sweepLogoGrad)"/>
+  <path d="M27 14l-3 6 6 5 6-9" stroke="url(#sweepLogoGrad)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.35"/>
+  <!-- Swept particles. -->
+  <circle cx="13" cy="31" r="2.2" fill="url(#sweepLogoGrad)"/>
+  <circle cx="19" cy="35" r="1.5" fill="url(#sweepLogoGrad)" opacity="0.7"/>
+  <circle cx="26" cy="37" r="1" fill="url(#sweepLogoGrad)" opacity="0.5"/>
+</svg>

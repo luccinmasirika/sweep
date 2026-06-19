@@ -1,0 +1,54 @@
+/* Sweep design tokens — a premium, CleanMyMac-grade dark system.
+   Every custom property in the contract is defined here. Screens and
+   components reference these names exclusively; raw colors should not
+   appear elsewhere. */
+
+:root {
+  color-scheme: dark;
+
+  /* --- backgrounds: deep near-black, layered upward into glassy surfaces --- */
+  --bg: #07080b;
+  --bg-elev: #0d0f15;
+  --surface: rgba(28, 32, 43, 0.72);
+  --surface-2: rgba(38, 43, 56, 0.78);
+  --border: rgba(255, 255, 255, 0.08);
+
+  /* --- text: a clean near-white that softens into dim then faint --- */
+  --text: #f4f6fb;
+  --text-dim: #99a1b3;
+  --text-faint: #5a6273;
+
+  /* --- accent: a vivid violet -> cyan gradient pair --- */
+  --accent: #7c5cff;
+  --accent-2: #21d4fd;
+
+  /* --- semantic colors --- */
+  --ok: #2fd07f;
+  --warn: #ffc24b;
+  --danger: #ff5d6c;
+  --personal: #ff8a5b;
+
+  /* --- shape --- */
+  --radius: 11px;
+  --radius-lg: 20px;
+  --gap: 16px;
+
+  /* --- elevation: soft, large, diffused shadows --- */
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.45),
+    0 40px 80px rgba(0, 0, 0, 0.55);
+
+  /* --- type stacks: SF-style system + mono --- */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo,
+    Consolas, monospace;
+
+  /* --- internal helpers (derived, not in the public contract) --- */
+  --accent-grad: linear-gradient(135deg, var(--accent), var(--accent-2));
+  --accent-soft: rgba(124, 92, 255, 0.16);
+  --accent-ring: rgba(124, 92, 255, 0.45);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --speed: 180ms;
+  --speed-slow: 240ms;
+}

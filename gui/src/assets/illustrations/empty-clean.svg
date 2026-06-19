@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" width="200" height="160" fill="none">
+  <defs>
+    <linearGradient id="emptyCleanGrad" x1="40" y1="30" x2="160" y2="130" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6d5cff"/>
+      <stop offset="1" stop-color="#00d4ff"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="100" cy="138" rx="62" ry="9" fill="url(#emptyCleanGrad)" opacity="0.12"/>
+  <circle cx="100" cy="74" r="46" stroke="url(#emptyCleanGrad)" stroke-width="2.4" opacity="0.35"/>
+  <circle cx="100" cy="74" r="34" fill="url(#emptyCleanGrad)" opacity="0.1"/>
+  <path d="M84 75l11 11 23-26" stroke="url(#emptyCleanGrad)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="150" cy="44" r="3" fill="url(#emptyCleanGrad)" opacity="0.7"/>
+  <circle cx="48" cy="58" r="2.4" fill="url(#emptyCleanGrad)" opacity="0.6"/>
+  <circle cx="58" cy="110" r="2" fill="url(#emptyCleanGrad)" opacity="0.45"/>
+  <circle cx="146" cy="104" r="2.6" fill="url(#emptyCleanGrad)" opacity="0.5"/>
+</svg>

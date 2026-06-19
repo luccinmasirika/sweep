@@ -8,10 +8,10 @@ use crate::{fsutil, ui};
 /// At most this many rows in the non-interactive tree.
 const TREE_ROWS: usize = 40;
 
-struct Item {
-    path: PathBuf,
-    size: u64,
-    is_dir: bool,
+pub(crate) struct Item {
+    pub path: PathBuf,
+    pub size: u64,
+    pub is_dir: bool,
 }
 
 /// `explore` answers "what is taking up space here?" — a size-sorted walk you
@@ -38,7 +38,7 @@ fn interactive() -> bool {
 }
 
 /// Immediate children of `dir`, each sized on disk, largest first.
-fn children(dir: &Path) -> Vec<Item> {
+pub(crate) fn children(dir: &Path) -> Vec<Item> {
     let spinner = ui::spinner(&ui::pretty_path(dir));
     let mut items: Vec<Item> = match std::fs::read_dir(dir) {
         Ok(rd) => rd

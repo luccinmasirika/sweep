@@ -1,25 +1,10 @@
-mod apps;
-mod catalog;
-mod cli;
-mod config;
-mod dupes;
-mod exec;
-mod explore;
-mod fsutil;
-mod maintenance;
-mod report;
-mod schedule;
-mod smart;
-mod targets;
-mod ui;
-mod uninstall;
-
 use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::Parser;
 
-use cli::{Cli, Command};
+use sweep::cli::{self, Cli, Command};
+use sweep::{config, dupes, explore, maintenance, schedule, smart, uninstall};
 
 fn main() -> ExitCode {
     match run(Cli::parse()) {

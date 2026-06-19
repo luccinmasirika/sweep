@@ -42,7 +42,7 @@ fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
-fn resolve(query: &str, installed: &[App]) -> Result<App> {
+pub(crate) fn resolve(query: &str, installed: &[App]) -> Result<App> {
     let q = query.to_ascii_lowercase();
     let q = q.trim_end_matches(".app");
     // A direct .app path the user passed.
@@ -88,7 +88,7 @@ fn pick_app(installed: &[App]) -> Result<App> {
 }
 
 /// The app bundle plus every per-id support file and launch agent.
-fn footprint(app: &App) -> Vec<PathBuf> {
+pub(crate) fn footprint(app: &App) -> Vec<PathBuf> {
     let mut paths = vec![app.path.clone()];
     let Some(home) = dirs::home_dir() else {
         return paths;

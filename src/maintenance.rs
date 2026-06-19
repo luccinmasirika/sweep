@@ -5,8 +5,8 @@ use crate::ui;
 
 const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister";
 
-struct Task {
-    label: &'static str,
+pub(crate) struct Task {
+    pub label: &'static str,
     cmds: &'static [&'static [&'static str]],
 }
 
@@ -51,6 +51,22 @@ pub fn run(fix: bool) -> Result<u32> {
         picks.iter().filter_map(|&i| TASKS.get(i)).collect()
     };
 
+    let failures = run_tasks(&chosen);
+    list_login_items();
+    Ok(failures)
+}
+
+/// Run the named maintenance tasks non-interactively, returning the failure
+/// count. Unknown labels are ignored. Used by the GUI API.
+pub(crate) fn run_named(labels: &[String]) -> u32 {
+    let chosen: Vec<&Task> = TASKS
+        .iter()
+        .filter(|t| labels.iter().any(|l| l == t.label))
+        .collect();
+    run_tasks(&chosen)
+}
+
+fn run_tasks(chosen: &[&Task]) -> u32 {
     let mut failures = 0;
     for task in chosen {
         let mut ok = true;
@@ -66,9 +82,7 @@ pub fn run(fix: bool) -> Result<u32> {
             ui::ok(task.label);
         }
     }
-
-    list_login_items();
-    Ok(failures)
+    failures
 }
 
 fn interactive() -> bool {

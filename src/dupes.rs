@@ -68,19 +68,19 @@ fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
-struct DupeSet {
-    size: u64,
-    paths: Vec<PathBuf>,
+pub(crate) struct DupeSet {
+    pub size: u64,
+    pub paths: Vec<PathBuf>,
 }
 
 impl DupeSet {
     /// Space freed by keeping a single copy.
-    fn wasted(&self) -> u64 {
+    pub(crate) fn wasted(&self) -> u64 {
         self.size * (self.paths.len() as u64 - 1)
     }
 }
 
-fn find_duplicates(root: &Path) -> Vec<DupeSet> {
+pub(crate) fn find_duplicates(root: &Path) -> Vec<DupeSet> {
     // Group by size first: only same-size files can be identical, and hashing is
     // the expensive part, so we only hash within a contested size.
     let mut by_size: HashMap<u64, Vec<PathBuf>> = HashMap::new();
