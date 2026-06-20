@@ -21,6 +21,13 @@
   padding: 0;
 }
 
+/* The `hidden` attribute must always win, even over author `display:flex/grid`
+   on a panel — otherwise a "hidden" hero still occupies layout and pushes the
+   content down. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
