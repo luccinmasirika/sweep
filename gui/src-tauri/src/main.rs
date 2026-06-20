@@ -14,11 +14,14 @@ fn main() {
                 use tauri::Manager;
                 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
                 if let Some(win) = app.get_webview_window("main") {
+                    // Radius MUST match #app's border-radius (24px) so the native
+                    // NSVisualEffectView is rounded too — otherwise its square
+                    // corners poke out behind the rounded content.
                     let _ = apply_vibrancy(
                         &win,
                         NSVisualEffectMaterial::Sidebar,
                         Some(NSVisualEffectState::Active),
-                        None,
+                        Some(24.0),
                     );
                 }
             }

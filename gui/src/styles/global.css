@@ -45,9 +45,11 @@ body {
 
 /* The window fills the screen (no floating margin) — only the menu floats.
    Rounded corners keep the native macOS window shape. */
+/* Concentric corners (Apple Tahoe rule): window radius = sidebar radius + gap
+   (14 + 10 = 24) so the floating menu's rounding nests perfectly in the window. */
 #app {
   height: 100vh;
-  border-radius: 18px;
+  border-radius: 24px;
   overflow: hidden;
 }
 
