@@ -570,8 +570,15 @@ function injectStyles(): void {
 
 .cl-clean.is-busy { pointer-events: none; opacity: 0.8; }
 
-.cl-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); align-items: start; }
-.cl-card { animation: fade-up var(--t-slow) var(--ease) both; }
+/* Masonry-style columns: cards of different heights pack tightly with no row
+   gaps (a short card no longer leaves a hole before the next one). */
+.cl-grid { display: block; column-width: 340px; column-gap: var(--gap); }
+.cl-card {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  margin-bottom: var(--gap);
+  animation: fade-up var(--t-slow) var(--ease) both;
+}
 
 .cl-card-head {
   display: grid;
