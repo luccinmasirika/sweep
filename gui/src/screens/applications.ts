@@ -1,221 +1,270 @@
-// Applications / Uninstaller screen.
+// Applications / Uninstaller — the Blue colour world.
 //
-// Lists installed apps as a searchable grid of cards. Selecting a card slides
-// in a detail panel that resolves the app's full footprint (caches, supports,
-// preferences, ...), totals it, and offers a confirmed Uninstall that removes
-// the app and every leftover via the sweep crate.
+// Idle/hero: the glassy app-X hexagon floats over its halo with a circular
+// "Scan apps" CTA. Running it calls api.apps() and cross-fades into a glass grid
+// of app cards with a live search field. Selecting a card opens a glass detail
+// panel that resolves the app's full footprint via api.footprint(), totals it,
+// and offers a confirmed Uninstall → api.uninstall(query, false) that removes the
+// bundle and every leftover. Colours come from the world theme vars only.
 
 import type { Api } from "../api";
 import type { AppInfo, Footprint } from "../types";
-import { button, formatBytes, spinner, toast } from "../components";
+import { button, formatBytes, icon, spinner, toast } from "../components";
+import heroRaw from "../assets/illustrations/applications.svg?raw";
 
 const STYLE_ID = "applications-screen-styles";
 
 const STYLES = `
 .screen-applications {
+  position: relative;
   display: flex;
   flex-direction: column;
-  height: 100%;
   min-height: 0;
-  gap: var(--gap);
+  flex: 1;
 }
-.screen-applications .apps-head {
+
+/* ---- idle / hero ---- */
+.ap-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--s-6) var(--s-4) var(--s-7);
+}
+.ap-hero-art {
+  position: relative;
+  width: 240px;
+  height: 240px;
+  display: grid;
+  place-items: center;
+  animation: hero-float 6s ease-in-out infinite alternate;
+}
+.ap-hero-art svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 24px 40px rgba(0, 0, 0, 0.4));
+  transition: transform var(--t-slow) var(--ease-soft);
+}
+.ap-hero-art::after {
+  content: "";
+  position: absolute;
+  inset: 4%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--glow), transparent 68%);
+  filter: blur(30px);
+  animation: halo-breathe 8s ease-in-out infinite alternate;
+}
+.ap-hero .ap-cta-wrap {
+  margin-top: var(--s-6);
+}
+.ap-hint {
+  margin-top: var(--s-3);
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+/* ---- results layout ---- */
+.ap-results {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  max-width: 1040px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--s-4) 0 var(--s-2);
+  animation: fade-up var(--t-slow) var(--ease) both;
+}
+.ap-results-head {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: var(--gap);
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+  flex-wrap: wrap;
 }
-.screen-applications .apps-head h2 {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 650;
+.ap-results-head .ap-eyebrow {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
+}
+.ap-results-head h2 {
+  margin: 6px 0 0;
+  font-size: 26px;
+  font-weight: 700;
   letter-spacing: -0.01em;
 }
-.screen-applications .apps-head .apps-sub {
+.ap-results-head .ap-sub {
   margin: 4px 0 0;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 14px;
 }
-.screen-applications .apps-search {
+.ap-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.ap-search {
   position: relative;
-  width: 280px;
-  max-width: 40vw;
+  width: 260px;
+  max-width: 42vw;
 }
-.screen-applications .apps-search svg {
+.ap-search .icon {
   position: absolute;
-  left: 12px;
+  left: 13px;
   top: 50%;
   transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
   color: var(--text-faint);
   pointer-events: none;
 }
-.screen-applications .apps-search input {
+.ap-search input {
   width: 100%;
-  height: 38px;
-  padding: 0 14px 0 36px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
+  height: 42px;
+  padding: 0 14px 0 38px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
   font: inherit;
   font-size: 14px;
   outline: none;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
 }
-.screen-applications .apps-search input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+.ap-search input::placeholder { color: var(--text-faint); }
+.ap-search input:focus {
+  border-color: color-mix(in srgb, var(--accent-2) 70%, transparent);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 0 3px var(--glow);
 }
-.screen-applications .apps-body {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-}
-.screen-applications .apps-grid {
+
+.ap-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 12px;
-  overflow-y: auto;
-  max-height: 100%;
-  padding: 2px 4px 24px 2px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--s-3);
   align-content: start;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  padding: 2px 4px 32px;
 }
-.screen-applications .app-card {
+.ap-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 18px 14px 16px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--surface);
+  gap: 12px;
+  padding: 20px 14px 18px;
   cursor: pointer;
   text-align: center;
-  transition: transform 0.16s ease, border-color 0.16s ease,
-    background 0.16s ease, box-shadow 0.16s ease;
+  border-radius: var(--radius-tile);
+  animation: fade-up var(--t-base) var(--ease) both;
 }
-.screen-applications .app-card:hover {
-  transform: translateY(-3px);
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: var(--surface-2);
-  box-shadow: var(--shadow);
-}
-.screen-applications .app-card:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
-}
-.screen-applications .app-card.is-active {
-  border-color: var(--accent);
-  background: var(--surface-2);
-}
-.screen-applications .app-glyph {
+.ap-card.is-hoverable:hover { transform: translateY(-3px); }
+.ap-card.is-selected { transform: translateY(-1px); }
+.ap-glyph {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
-  border-radius: 16px;
-  font-size: 22px;
-  font-weight: 650;
-  color: var(--text);
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: var(--shadow);
+  width: 60px;
+  height: 60px;
+  border-radius: 17px;
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #fff;
+  background:
+    radial-gradient(120% 120% at 30% 22%, rgba(255, 255, 255, 0.4), transparent 55%),
+    linear-gradient(150deg, var(--accent), var(--accent-2));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+    0 8px 20px var(--glow),
+    0 2px 6px rgba(0, 0, 0, 0.32);
 }
-.screen-applications .app-name {
-  font-size: 13px;
-  font-weight: 550;
+.ap-name {
+  position: relative;
+  font-size: 13.5px;
+  font-weight: 600;
   line-height: 1.3;
+  color: var(--text);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.screen-applications .apps-state {
+
+.ap-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 14px;
-  height: 100%;
+  min-height: 280px;
+  flex: 1;
   color: var(--text-dim);
   text-align: center;
   padding: 40px;
 }
-.screen-applications .apps-state h3 {
-  margin: 0;
-  color: var(--text);
-  font-size: 16px;
-  font-weight: 600;
-}
-.screen-applications .apps-state p {
-  margin: 0;
-  max-width: 360px;
-  font-size: 13px;
-  line-height: 1.5;
-}
+.ap-state h3 { margin: 0; color: var(--text); font-size: 18px; font-weight: 700; }
+.ap-state p { margin: 0; max-width: 380px; font-size: 14px; line-height: 1.5; }
 
-.screen-applications .detail-scrim {
+/* ---- detail panel ---- */
+.ap-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  z-index: 5;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.22s ease;
-  z-index: 5;
+  transition: opacity var(--t-base) var(--ease);
 }
-.screen-applications .detail-scrim.is-open {
-  opacity: 1;
-  pointer-events: auto;
-}
-.screen-applications .detail-panel {
+.ap-scrim.is-open { opacity: 1; pointer-events: auto; }
+.ap-panel {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(440px, 92%);
-  background: var(--bg-elev);
-  border-left: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-  transform: translateX(100%);
-  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  top: var(--s-3);
+  right: var(--s-3);
+  bottom: var(--s-3);
+  width: min(460px, calc(100% - var(--s-5)));
   z-index: 6;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  border-radius: var(--radius-card);
+  transform: translateX(calc(100% + var(--s-4)));
+  transition: transform var(--t-slow) var(--ease-soft);
 }
-.screen-applications .detail-panel.is-open {
-  transform: translateX(0);
-}
-.screen-applications .detail-header {
+.ap-panel.is-open { transform: translateX(0); }
+
+.ap-detail-header {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 20px 20px 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hairline);
 }
-.screen-applications .detail-header .app-glyph {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  font-size: 20px;
-  flex: 0 0 auto;
-}
-.screen-applications .detail-header .detail-heading {
-  flex: 1;
-  min-width: 0;
-}
-.screen-applications .detail-header h3 {
+.ap-detail-header .ap-glyph { width: 50px; height: 50px; border-radius: 15px; font-size: 20px; flex: 0 0 auto; }
+.ap-detail-heading { flex: 1; min-width: 0; }
+.ap-detail-heading h3 {
   margin: 0;
-  font-size: 17px;
-  font-weight: 650;
+  font-size: 18px;
+  font-weight: 700;
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.screen-applications .detail-header .detail-id {
+.ap-detail-id {
   margin: 3px 0 0;
   font-family: var(--mono);
   font-size: 11px;
@@ -224,74 +273,66 @@ const STYLES = `
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.screen-applications .detail-close {
+.ap-close {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
   border: 1px solid transparent;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text-dim);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
-.screen-applications .detail-close:hover {
-  background: var(--surface);
-  color: var(--text);
-}
-.screen-applications .detail-close svg {
-  width: 18px;
-  height: 18px;
-}
-.screen-applications .detail-content {
+.ap-close:hover { background: rgba(255, 255, 255, 0.12); color: var(--text); }
+.ap-close svg { width: 18px; height: 18px; stroke: currentColor; }
+
+.ap-detail-content {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 18px 20px;
 }
-.screen-applications .detail-total {
+.ap-total {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 16px 18px;
   margin-bottom: 16px;
-  border-radius: var(--radius);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--hairline);
 }
-.screen-applications .detail-total .total-label {
+.ap-total .ap-total-label {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
 }
-.screen-applications .detail-total .total-value {
-  font-size: 22px;
+.ap-total .ap-total-value {
+  font-size: 26px;
   font-weight: 700;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-.screen-applications .footprint-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.screen-applications .footprint-item {
+.ap-fp-list { display: flex; flex-direction: column; gap: 2px; }
+.ap-fp-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  transition: background 0.15s ease;
+  padding: 11px 12px;
+  border-radius: 12px;
+  transition: background var(--t-fast) var(--ease);
 }
-.screen-applications .footprint-item:hover {
-  background: var(--surface);
-}
-.screen-applications .footprint-item .fp-path {
+.ap-fp-item:hover { background: rgba(255, 255, 255, 0.06); }
+.ap-fp-path {
   flex: 1;
   min-width: 0;
   font-size: 13px;
@@ -302,26 +343,25 @@ const STYLES = `
   direction: rtl;
   text-align: left;
 }
-.screen-applications .footprint-item .fp-size {
+.ap-fp-size {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
   font-size: 13px;
   color: var(--text-dim);
 }
-.screen-applications .detail-footer {
+.ap-detail-footer {
+  position: relative;
   padding: 16px 20px 20px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hairline);
 }
-.screen-applications .detail-footer .btn {
-  width: 100%;
-}
-.screen-applications .detail-footer .footer-hint {
+.ap-detail-footer .btn { width: 100%; height: 46px; border-radius: var(--radius-pill); }
+.ap-detail-footer .ap-footer-hint {
   margin: 10px 0 0;
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-faint);
   text-align: center;
 }
-.screen-applications .detail-state {
+.ap-detail-state {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -331,10 +371,13 @@ const STYLES = `
   color: var(--text-dim);
   text-align: center;
 }
+.ap-detail-state h3 { margin: 0; color: var(--text); font-size: 16px; font-weight: 700; }
+.ap-detail-state p { margin: 0; max-width: 320px; font-size: 13px; line-height: 1.5; }
+
 @media (prefers-reduced-motion: reduce) {
-  .screen-applications .detail-panel,
-  .screen-applications .detail-scrim,
-  .screen-applications .app-card { transition: none; }
+  .ap-hero-art { animation: none; }
+  .ap-hero-art::after { animation: none; }
+  .ap-panel, .ap-scrim, .ap-card { transition: none; animation: none; }
 }
 `;
 
@@ -346,8 +389,6 @@ function ensureStyles(): void {
   document.head.appendChild(tag);
 }
 
-const SEARCH_ICON =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>';
 const CLOSE_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
@@ -360,7 +401,7 @@ function initials(name: string): string {
 
 function glyph(app: AppInfo): HTMLElement {
   const el = document.createElement("div");
-  el.className = "app-glyph";
+  el.className = "ap-glyph";
   el.setAttribute("aria-hidden", "true");
   el.textContent = initials(app.name);
   return el;
@@ -368,7 +409,7 @@ function glyph(app: AppInfo): HTMLElement {
 
 function stateBlock(title: string, message: string): HTMLElement {
   const el = document.createElement("div");
-  el.className = "apps-state";
+  el.className = "ap-state";
   const h = document.createElement("h3");
   h.textContent = title;
   const p = document.createElement("p");
@@ -382,39 +423,24 @@ export function renderApplications(root: HTMLElement, api: Api): void {
 
   const screen = document.createElement("div");
   screen.className = "screen screen-applications";
-
-  // Header with title + live search.
-  const head = document.createElement("div");
-  head.className = "apps-head";
-  const headLeft = document.createElement("div");
-  headLeft.innerHTML =
-    '<h2>Applications</h2><p class="apps-sub">Select an app to inspect its footprint and uninstall it cleanly.</p>';
-
-  const search = document.createElement("div");
-  search.className = "apps-search";
-  search.innerHTML = SEARCH_ICON;
-  const input = document.createElement("input");
-  input.type = "search";
-  input.placeholder = "Search apps";
-  input.setAttribute("aria-label", "Search applications");
-  input.autocomplete = "off";
-  input.spellcheck = false;
-  search.appendChild(input);
-  head.append(headLeft, search);
-
-  const body = document.createElement("div");
-  body.className = "apps-body";
-  screen.append(head, body);
   root.appendChild(screen);
 
-  // ---- Detail panel state ------------------------------------------------
+  // Stage holds whichever state is live (hero / loading / results).
+  const stage = document.createElement("div");
+  stage.style.display = "flex";
+  stage.style.flexDirection = "column";
+  stage.style.flex = "1";
+  stage.style.minHeight = "0";
+  screen.appendChild(stage);
+
+  // ---- Detail panel (shared across the results state) --------------------
   let selected: AppInfo | null = null;
   let footprintToken = 0;
 
   const scrim = document.createElement("div");
-  scrim.className = "detail-scrim";
+  scrim.className = "ap-scrim";
   const panel = document.createElement("div");
-  panel.className = "detail-panel";
+  panel.className = "ap-panel glass-strong";
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-modal", "true");
   panel.setAttribute("aria-label", "Application details");
@@ -425,12 +451,12 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     selected = null;
     panel.classList.remove("is-open");
     scrim.classList.remove("is-open");
-    document
-      .querySelectorAll<HTMLElement>(".screen-applications .app-card.is-active")
-      .forEach((c) => c.classList.remove("is-active"));
+    screen
+      .querySelectorAll<HTMLElement>(".ap-card.is-selected")
+      .forEach((c) => c.classList.remove("is-selected"));
     window.setTimeout(() => {
       if (!selected) panel.hidden = true;
-    }, 280);
+    }, 320);
   }
 
   scrim.addEventListener("click", closeDetail);
@@ -446,55 +472,55 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     panel.innerHTML = "";
 
     const header = document.createElement("div");
-    header.className = "detail-header";
+    header.className = "ap-detail-header";
     header.appendChild(glyph(app));
     const heading = document.createElement("div");
-    heading.className = "detail-heading";
+    heading.className = "ap-detail-heading";
     const h3 = document.createElement("h3");
     h3.textContent = fp.name || app.name;
     const idLine = document.createElement("p");
-    idLine.className = "detail-id";
+    idLine.className = "ap-detail-id";
     idLine.textContent = fp.id || app.id || app.path;
     heading.append(h3, idLine);
     const close = document.createElement("button");
     close.type = "button";
-    close.className = "detail-close";
+    close.className = "ap-close";
     close.setAttribute("aria-label", "Close");
     close.innerHTML = CLOSE_ICON;
     close.addEventListener("click", closeDetail);
     header.append(heading, close);
 
     const content = document.createElement("div");
-    content.className = "detail-content";
+    content.className = "ap-detail-content";
 
     const items = [...fp.items].sort((a, b) => b.size - a.size);
     const total = items.reduce((sum, it) => sum + it.size, 0);
 
     const totalRow = document.createElement("div");
-    totalRow.className = "detail-total";
-    totalRow.innerHTML = `<span class="total-label">Total footprint</span><span class="total-value">${formatBytes(
+    totalRow.className = "ap-total";
+    totalRow.innerHTML = `<span class="ap-total-label">Total footprint</span><span class="ap-total-value">${formatBytes(
       total
     )}</span>`;
     content.appendChild(totalRow);
 
     if (items.length === 0) {
       const empty = document.createElement("div");
-      empty.className = "detail-state";
+      empty.className = "ap-detail-state";
       empty.innerHTML =
         '<p>No leftover files were found for this app. Uninstalling will remove the bundle itself.</p>';
       content.appendChild(empty);
     } else {
       const list = document.createElement("div");
-      list.className = "footprint-list";
+      list.className = "ap-fp-list";
       for (const it of items) {
         const row = document.createElement("div");
-        row.className = "footprint-item";
+        row.className = "ap-fp-item";
         const path = document.createElement("span");
-        path.className = "fp-path";
+        path.className = "ap-fp-path";
         path.textContent = it.path;
         path.title = it.path;
         const size = document.createElement("span");
-        size.className = "fp-size";
+        size.className = "ap-fp-size";
         size.textContent = formatBytes(it.size);
         row.append(path, size);
         list.appendChild(row);
@@ -503,14 +529,14 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     }
 
     const footer = document.createElement("div");
-    footer.className = "detail-footer";
+    footer.className = "ap-detail-footer";
     const uninstallBtn = button({
       label: `Uninstall ${fp.name || app.name}`,
       variant: "danger",
       onClick: () => runUninstall(app, fp, uninstallBtn),
     });
     const hint = document.createElement("p");
-    hint.className = "footer-hint";
+    hint.className = "ap-footer-hint";
     hint.textContent =
       total > 0
         ? `Moves the app and ${formatBytes(total)} of leftovers to the Trash.`
@@ -563,15 +589,15 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     selected = app;
     const token = ++footprintToken;
 
-    document
-      .querySelectorAll<HTMLElement>(".screen-applications .app-card.is-active")
-      .forEach((c) => c.classList.remove("is-active"));
-    cardEl.classList.add("is-active");
+    screen
+      .querySelectorAll<HTMLElement>(".ap-card.is-selected")
+      .forEach((c) => c.classList.remove("is-selected"));
+    cardEl.classList.add("is-selected");
 
     panel.hidden = false;
     panel.innerHTML = "";
     const loading = document.createElement("div");
-    loading.className = "detail-state";
+    loading.className = "ap-detail-state";
     loading.append(spinner());
     const p = document.createElement("p");
     p.textContent = `Scanning ${app.name}…`;
@@ -592,46 +618,50 @@ export function renderApplications(root: HTMLElement, api: Api): void {
       if (token !== footprintToken) return;
       panel.innerHTML = "";
       const header = document.createElement("div");
-      header.className = "detail-header";
+      header.className = "ap-detail-header";
       header.appendChild(glyph(app));
       const heading = document.createElement("div");
-      heading.className = "detail-heading";
-      heading.innerHTML = `<h3></h3>`;
-      (heading.querySelector("h3") as HTMLElement).textContent = app.name;
+      heading.className = "ap-detail-heading";
+      const h3 = document.createElement("h3");
+      h3.textContent = app.name;
+      heading.appendChild(h3);
       const close = document.createElement("button");
       close.type = "button";
-      close.className = "detail-close";
+      close.className = "ap-close";
       close.setAttribute("aria-label", "Close");
       close.innerHTML = CLOSE_ICON;
       close.addEventListener("click", closeDetail);
       header.append(heading, close);
 
-      const errState = document.createElement("div");
-      errState.className = "detail-content";
+      const content = document.createElement("div");
+      content.className = "ap-detail-content";
       const block = document.createElement("div");
-      block.className = "detail-state";
-      block.innerHTML = `<h3 style="color:var(--text)">Couldn’t read footprint</h3>`;
+      block.className = "ap-detail-state";
+      const title = document.createElement("h3");
+      title.textContent = "Couldn’t read footprint";
       const msg = document.createElement("p");
       msg.textContent = String(err);
-      block.appendChild(msg);
       const retry = button({
         label: "Retry",
         variant: "ghost",
         onClick: () => void openDetail(app, cardEl),
       });
-      block.appendChild(retry);
-      errState.appendChild(block);
-      panel.append(header, errState);
+      block.append(title, msg, retry);
+      content.appendChild(block);
+      panel.append(header, content);
     }
   }
 
-  // ---- Grid rendering ----------------------------------------------------
+  // ---- Results grid ------------------------------------------------------
   let allApps: AppInfo[] = [];
+  let searchInput: HTMLInputElement | null = null;
+  let gridEl: HTMLElement | null = null;
 
   function renderGrid(): void {
-    body.innerHTML = "";
+    if (!gridEl) return;
+    gridEl.innerHTML = "";
 
-    const query = input.value.trim().toLowerCase();
+    const query = searchInput ? searchInput.value.trim().toLowerCase() : "";
     const filtered = query
       ? allApps.filter(
           (a) =>
@@ -641,81 +671,188 @@ export function renderApplications(root: HTMLElement, api: Api): void {
       : allApps;
 
     if (allApps.length === 0) {
-      body.appendChild(
+      gridEl.style.display = "block";
+      gridEl.appendChild(
         stateBlock(
           "No applications found",
           "Sweep didn’t detect any installed applications on this Mac."
         )
       );
-    } else if (filtered.length === 0) {
-      body.appendChild(
+      return;
+    }
+    if (filtered.length === 0) {
+      gridEl.style.display = "block";
+      gridEl.appendChild(
         stateBlock(
           "No matches",
-          `No applications match “${input.value.trim()}”. Try a different search.`
+          `No applications match “${searchInput?.value.trim()}”. Try a different search.`
         )
       );
-    } else {
-      const grid = document.createElement("div");
-      grid.className = "apps-grid";
-      grid.setAttribute("role", "list");
-      for (const app of filtered) {
-        const cardEl = document.createElement("div");
-        cardEl.className = "app-card";
-        cardEl.setAttribute("role", "listitem");
-        cardEl.tabIndex = 0;
-        cardEl.setAttribute("aria-label", `Inspect ${app.name}`);
-        cardEl.appendChild(glyph(app));
-        const nameEl = document.createElement("div");
-        nameEl.className = "app-name";
-        nameEl.textContent = app.name;
-        nameEl.title = app.name;
-        cardEl.appendChild(nameEl);
-        cardEl.addEventListener("click", () => void openDetail(app, cardEl));
-        cardEl.addEventListener("keydown", (e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            void openDetail(app, cardEl);
-          }
-        });
-        grid.appendChild(cardEl);
-      }
-      body.appendChild(grid);
+      return;
     }
 
-    // Re-attach the detail overlay (innerHTML reset removed it).
-    body.append(scrim, panel);
+    gridEl.style.display = "grid";
+    filtered.forEach((app, i) => {
+      const cardEl = document.createElement("div");
+      cardEl.className = "ap-card glass-card is-hoverable";
+      cardEl.setAttribute("role", "listitem");
+      cardEl.tabIndex = 0;
+      cardEl.setAttribute("aria-label", `Inspect ${app.name}`);
+      cardEl.style.animationDelay = `${Math.min(i, 16) * 30}ms`;
+      cardEl.appendChild(glyph(app));
+      const nameEl = document.createElement("div");
+      nameEl.className = "ap-name";
+      nameEl.textContent = app.name;
+      nameEl.title = app.name;
+      cardEl.appendChild(nameEl);
+      cardEl.addEventListener("click", () => void openDetail(app, cardEl));
+      cardEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          void openDetail(app, cardEl);
+        }
+      });
+      gridEl!.appendChild(cardEl);
+    });
   }
 
-  input.addEventListener("input", () => {
-    if (allApps.length > 0) renderGrid();
-  });
+  function showResults(): void {
+    stage.innerHTML = "";
 
-  // ---- Initial load ------------------------------------------------------
-  async function load(): Promise<void> {
-    body.innerHTML = "";
+    const results = document.createElement("div");
+    results.className = "ap-results";
+
+    const head = document.createElement("div");
+    head.className = "ap-results-head";
+    const headLeft = document.createElement("div");
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "ap-eyebrow";
+    eyebrow.textContent = "Applications";
+    const h2 = document.createElement("h2");
+    h2.textContent = "Manage your apps";
+    const sub = document.createElement("p");
+    sub.className = "ap-sub";
+    sub.textContent = `${allApps.length} app${
+      allApps.length === 1 ? "" : "s"
+    } installed — select one to inspect its footprint and uninstall it cleanly.`;
+    headLeft.append(eyebrow, h2, sub);
+
+    const headActions = document.createElement("div");
+    headActions.className = "ap-head-actions";
+
+    const search = document.createElement("div");
+    search.className = "ap-search";
+    search.appendChild(icon("search", { size: 16 }));
+    const input = document.createElement("input");
+    input.type = "search";
+    input.placeholder = "Search apps";
+    input.setAttribute("aria-label", "Search applications");
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.addEventListener("input", () => renderGrid());
+    search.appendChild(input);
+    searchInput = input;
+
+    const rescan = button({
+      label: "Rescan",
+      variant: "ghost",
+      icon: "refresh",
+      onClick: () => void load(),
+    });
+
+    headActions.append(search, rescan);
+    head.append(headLeft, headActions);
+
+    const grid = document.createElement("div");
+    grid.className = "ap-grid";
+    grid.setAttribute("role", "list");
+    gridEl = grid;
+
+    results.append(head, grid);
+    stage.appendChild(results);
+
+    // Detail overlay lives at the screen level so it covers the full content.
+    screen.append(scrim, panel);
+
+    renderGrid();
+  }
+
+  function showLoading(): void {
+    stage.innerHTML = "";
     const loading = document.createElement("div");
-    loading.className = "apps-state";
-    loading.append(spinner());
+    loading.className = "ap-state";
+    const sp = spinner();
+    sp.classList.add("is-lg");
+    loading.append(sp);
     const p = document.createElement("p");
     p.textContent = "Scanning installed applications…";
     loading.appendChild(p);
-    body.appendChild(loading);
+    stage.appendChild(loading);
+  }
 
+  function showHero(): void {
+    stage.innerHTML = "";
+    gridEl = null;
+    searchInput = null;
+
+    const hero = document.createElement("div");
+    hero.className = "ap-hero";
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "eyebrow";
+    eyebrow.textContent = "Applications";
+    const art = document.createElement("div");
+    art.className = "ap-hero-art";
+    art.setAttribute("aria-hidden", "true");
+    art.innerHTML = heroRaw;
+    const title = document.createElement("h1");
+    title.className = "title";
+    title.textContent = "Uninstall apps, leave nothing behind.";
+    const subtitle = document.createElement("p");
+    subtitle.className = "subtitle";
+    subtitle.textContent =
+      "Find every app on your Mac and remove it along with its caches, supports and preferences.";
+
+    const ctaWrap = document.createElement("div");
+    ctaWrap.className = "ap-cta-wrap";
+    const cta = document.createElement("button");
+    cta.type = "button";
+    cta.className = "cta-circle";
+    cta.textContent = "Scan apps";
+    cta.setAttribute("aria-label", "Scan installed applications");
+    cta.addEventListener("click", () => void load());
+    ctaWrap.appendChild(cta);
+
+    const hint = document.createElement("p");
+    hint.className = "ap-hint";
+    hint.textContent = "Nothing is deleted — items move to the Trash.";
+
+    hero.append(eyebrow, art, title, subtitle, ctaWrap, hint);
+    stage.appendChild(hero);
+  }
+
+  function showError(err: unknown): void {
+    stage.innerHTML = "";
+    const errState = stateBlock("Couldn’t load applications", String(err));
+    errState.appendChild(
+      button({ label: "Try again", variant: "primary", onClick: () => void load() })
+    );
+    stage.appendChild(errState);
+  }
+
+  // ---- Load flow ---------------------------------------------------------
+  async function load(): Promise<void> {
+    showLoading();
     try {
       const apps = await api.apps();
       allApps = [...apps].sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
       );
-      renderGrid();
+      showResults();
     } catch (err) {
-      body.innerHTML = "";
-      const errState = stateBlock("Couldn’t load applications", String(err));
-      errState.appendChild(
-        button({ label: "Retry", variant: "ghost", onClick: () => void load() })
-      );
-      body.appendChild(errState);
+      showError(err);
     }
   }
 
-  void load();
+  // Start on the idle hero; the circular CTA kicks off the scan.
+  showHero();
 }

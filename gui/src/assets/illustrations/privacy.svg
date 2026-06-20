@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <radialGradient id="privHalo" cx="50%" cy="46%" r="52%">
+      <stop offset="0" stop-color="#ff6fae" stop-opacity="0.6"/>
+      <stop offset="55%" stop-color="#ff3d8b" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#ff3d8b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="privBody" cx="36%" cy="24%" r="86%">
+      <stop offset="0" stop-color="#ffc3dd"/>
+      <stop offset="30%" stop-color="#ff86bb"/>
+      <stop offset="62%" stop-color="#ff3d8b"/>
+      <stop offset="100%" stop-color="#7e1150"/>
+    </radialGradient>
+    <linearGradient id="privGlass" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="42%" stop-color="#ffd6e8" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#8e1457" stop-opacity="0.32"/>
+    </linearGradient>
+    <linearGradient id="privRim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe2ee" stop-opacity="0.95"/>
+      <stop offset="46%" stop-color="#ff6fae" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.85"/>
+    </linearGradient>
+    <linearGradient id="privSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="privCheck" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#ffd9ea"/>
+    </linearGradient>
+    <radialGradient id="privPlate" cx="42%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="60%" stop-color="#ff6fae" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#8e1457" stop-opacity="0.3"/>
+    </radialGradient>
+    <filter id="privShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="privSoft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3.5"/>
+    </filter>
+    <filter id="privGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+  </defs>
+
+  <!-- world halo -->
+  <circle cx="120" cy="112" r="104" fill="url(#privHalo)"/>
+
+  <!-- contact shadow -->
+  <ellipse cx="120" cy="206" rx="60" ry="15" fill="#2c0819" opacity="0.5" filter="url(#privShadow)"/>
+
+  <!-- soft cupped hand cradling the shield -->
+  <g opacity="0.9">
+    <path d="M58 150c-7 4-12 13-9 22 4 12 18 22 38 27 19 5 47 5 66 0 20-5 33-15 37-27 3-9-2-18-9-22-6-3-13-1-17 4-9 11-25 17-44 17s-35-6-44-17c-4-5-11-7-18-4z"
+          fill="url(#privPlate)" filter="url(#privSoft)"/>
+    <path d="M62 154c10 13 30 23 58 23s48-10 58-23"
+          stroke="#ffd6e8" stroke-width="2" stroke-linecap="round" fill="none" opacity="0.55"/>
+  </g>
+
+  <!-- shield back glow -->
+  <path d="M120 36l60 24v46c0 42-29 66-60 80-31-14-60-38-60-80V60z"
+        fill="#ff3d8b" opacity="0.45" filter="url(#privGlow)"/>
+
+  <!-- shield body -->
+  <path d="M120 40l56 22v44c0 39-27 62-56 75-29-13-56-36-56-75V62z"
+        fill="url(#privBody)"/>
+  <!-- glass overlay -->
+  <path d="M120 40l56 22v44c0 39-27 62-56 75-29-13-56-36-56-75V62z"
+        fill="url(#privGlass)"/>
+  <!-- crisp rim light -->
+  <path d="M120 40l56 22v44c0 39-27 62-56 75-29-13-56-36-56-75V62z"
+        fill="none" stroke="url(#privRim)" stroke-width="2.4"/>
+
+  <!-- top specular highlight -->
+  <path d="M120 50c18 0 34 6 44 14-7 14-25 23-44 23s-37-9-44-23c10-8 26-14 44-14z"
+        fill="url(#privSheen)" opacity="0.55"/>
+  <ellipse cx="98" cy="74" rx="20" ry="13" fill="#ffffff" opacity="0.6" filter="url(#privSoft)"/>
+
+  <!-- protective checkmark -->
+  <path d="M99 116l13 14 30-36" stroke="#8e1457" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" opacity="0.35"/>
+  <path d="M99 114l13 14 30-36" stroke="url(#privCheck)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- floating spark accents -->
+  <circle cx="178" cy="58" r="4.5" fill="#ffd6e8" opacity="0.9" filter="url(#privSoft)"/>
+  <circle cx="60" cy="92" r="3" fill="#ff9ec7" opacity="0.8"/>
+  <circle cx="168" cy="150" r="2.6" fill="#ffd6e8" opacity="0.7"/>
+</svg>

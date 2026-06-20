@@ -2,6 +2,7 @@
 // in turn starts the router.
 
 import "./styles/tokens.css";
+import "./styles/glass.css";
 import "./styles/global.css";
 import { api } from "./api";
 import { mountShell } from "./shell";

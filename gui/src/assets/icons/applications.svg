@@ -1,6 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3.5" y="3.5" width="7" height="7" rx="2"/>
-  <rect x="13.5" y="3.5" width="7" height="7" rx="2" opacity="0.5"/>
-  <rect x="3.5" y="13.5" width="7" height="7" rx="2" opacity="0.5"/>
-  <rect x="13.5" y="13.5" width="7" height="7" rx="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3.3" y="3.3" width="7.4" height="7.4" rx="2.3" fill="currentColor" fill-opacity="0.18" stroke="none"/>
+  <rect x="13.3" y="13.3" width="7.4" height="7.4" rx="2.3" fill="currentColor" fill-opacity="0.18" stroke="none"/>
+  <rect x="3.3" y="3.3" width="7.4" height="7.4" rx="2.3"/>
+  <rect x="13.3" y="3.3" width="7.4" height="7.4" rx="2.3" opacity="0.55"/>
+  <rect x="3.3" y="13.3" width="7.4" height="7.4" rx="2.3" opacity="0.55"/>
+  <rect x="13.3" y="13.3" width="7.4" height="7.4" rx="2.3"/>
+  <path d="M5 5.4a2 2 0 0 1 1.6-1.1" stroke="#fff" stroke-opacity="0.4" stroke-width="1.1"/>
+  <path d="M15 15.4a2 2 0 0 1 1.6-1.1" stroke="#fff" stroke-opacity="0.4" stroke-width="1.1"/>
 </svg>

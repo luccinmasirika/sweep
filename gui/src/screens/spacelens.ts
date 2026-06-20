@@ -1,23 +1,25 @@
-// Space Lens. A radial / sunburst view of disk usage: explore(path) from the
-// home folder, arcs sized by bytes, click an arc to drill into a directory, a
-// breadcrumb to climb back up, and a trash action that runs clean([path]).
-// This is the signature visual of the app — every interaction is animated and
-// the data is always live from the sweep backend.
+// Space Lens — the Deep Purple world. An idle hero (glossy magnifier over a
+// radial sunburst) cross-fades into the signature visual: a glassy RADIAL
+// sunburst bubble map of disk usage. explore(path) starts at the home folder,
+// arcs are sized by bytes and themed to the world accent, click an arc to drill
+// into a directory, a breadcrumb climbs back up, and a trash action runs
+// clean([path]). All data is live from the sweep backend.
 
 import { homeDir } from "@tauri-apps/api/path";
 import type { Api } from "../api";
 import type { ExploreChild, ExploreNode } from "../types";
-import { button, card, formatBytes, icon, spinner, toast } from "../components";
+import { button, formatBytes, icon, spinner, toast } from "../components";
+import heroRaw from "../assets/illustrations/spacelens.svg?raw";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Geometry of the dial. The hub holds the current folder summary; the ring
 // holds one arc per child, sized by its share of the total bytes.
-const SIZE = 460;
+const SIZE = 440;
 const CENTER = SIZE / 2;
 const HUB_R = 96;
-const RING_INNER = 112;
-const RING_OUTER = 206;
+const RING_INNER = 110;
+const RING_OUTER = 202;
 const GAP_DEG = 0.9; // tiny breathing room between arcs
 
 // Slices smaller than this fraction of the total are folded into a single
@@ -25,12 +27,17 @@ const GAP_DEG = 0.9; // tiny breathing room between arcs
 const MIN_SLICE = 0.012;
 const MAX_SLICES = 22;
 
+// Arc tints are derived from the world accent by rotating its hue, so the dial
+// reads as a family of purples instead of a hardcoded rainbow. Each step is a
+// `color-mix` over the theme vars — no literal colour ever leaves this file.
+const TINTS = 7;
+
 interface Slice {
   child: ExploreChild | null; // null => the synthetic "Other" bucket
   label: string;
   bytes: number;
   fraction: number;
-  hue: number;
+  tint: number; // index into the derived accent ramp
   start: number; // degrees
   end: number; // degrees
 }
@@ -44,45 +51,135 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
   // Navigation stack of explored nodes; the last entry is what's on screen.
   const stack: ExploreNode[] = [];
   let busy = false;
+  // Tracks whether the idle hero has been dismissed in favour of the dial.
+  let entered = false;
 
-  const head = card({ className: "lens-head" });
-  head.appendChild(
-    elFromHTML(`
-      <div class="spread">
-        <div>
-          <div class="section-title">Space Lens</div>
-          <h2 class="lens-title">Where your storage lives</h2>
-        </div>
-      </div>`)
-  );
+  // ---- idle hero --------------------------------------------------------
+
+  const hero = document.createElement("section");
+  hero.className = "hero lens-hero";
+  hero.innerHTML = `
+    <div class="eyebrow">Space Lens</div>
+    <div class="hero-art" aria-hidden="true">${heroRaw}</div>
+    <h1 class="title">See exactly where your storage lives.</h1>
+    <p class="subtitle">A radial map of every folder, sized by what it holds. Drill in, find the heavy ones, and send them to the Trash.</p>
+    <div class="lens-cta-pedestal"></div>
+    <p class="lens-hint">Starts from your Home folder. Nothing is deleted — items move to the Trash.</p>`;
+
+  const cta = document.createElement("button");
+  cta.type = "button";
+  cta.className = "cta-circle lens-cta";
+  cta.textContent = "Explore";
+  cta.setAttribute("aria-label", "Explore your Home folder");
+  hero.querySelector(".lens-cta-pedestal")!.appendChild(cta);
+
+  // ---- results / dial ---------------------------------------------------
+
+  const results = document.createElement("section");
+  results.className = "lens-results";
+  results.hidden = true;
+
+  const head = document.createElement("div");
+  head.className = "results-head lens-head";
+
+  const headLeft = document.createElement("div");
+  headLeft.className = "lens-head-left";
   const crumbs = document.createElement("nav");
   crumbs.className = "lens-crumbs";
   crumbs.setAttribute("aria-label", "Folder path");
-  head.appendChild(crumbs);
+  const headSub = document.createElement("div");
+  headSub.className = "results-sub lens-sub";
+  headLeft.append(crumbs, headSub);
 
-  const stage = card({ className: "lens-stage" });
+  const headActions = document.createElement("div");
+  headActions.className = "results-actions";
+  const rescan = button({
+    label: "Rescan",
+    variant: "ghost",
+    icon: "refresh",
+    onClick: () => {
+      const cur = stack[stack.length - 1];
+      if (cur) void explore(cur.path, false);
+    },
+  });
+  headActions.appendChild(rescan);
+
+  head.append(headLeft, headActions);
+
+  const stage = document.createElement("div");
+  stage.className = "glass lens-stage";
   const body = document.createElement("div");
   body.className = "lens-body";
   stage.appendChild(body);
 
-  screen.append(head, stage);
+  results.append(head, stage);
+
+  screen.append(hero, results);
   root.appendChild(screen);
+
+  const reduceMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)"
+  ).matches;
+
+  // Pointer parallax on the hero art (disabled under reduced-motion).
+  const art = hero.querySelector<HTMLElement>(".hero-art");
+  if (art && !reduceMotion) {
+    hero.addEventListener("pointermove", (e) => {
+      const r = hero.getBoundingClientRect();
+      const dx = (e.clientX - (r.left + r.width / 2)) / r.width;
+      const dy = (e.clientY - (r.top + r.height / 2)) / r.height;
+      art.style.setProperty("--px", `${dx * 8}px`);
+      art.style.setProperty("--py", `${dy * 8}px`);
+    });
+    hero.addEventListener("pointerleave", () => {
+      art.style.setProperty("--px", "0px");
+      art.style.setProperty("--py", "0px");
+    });
+  }
+
+  cta.addEventListener("click", () => {
+    if (busy) return;
+    void enter();
+  });
+
+  // Cross-fade from the idle hero into the dial results, then load Home.
+  async function enter(): Promise<void> {
+    if (entered) return;
+    entered = true;
+    hero.classList.add("is-leaving");
+    const reveal = () => {
+      hero.hidden = true;
+      results.hidden = false;
+      results.classList.add("is-in");
+    };
+    if (reduceMotion) reveal();
+    else window.setTimeout(reveal, 200);
+
+    try {
+      const home = await resolveHome();
+      await explore(home, true);
+    } catch {
+      showError("Home", "home directory not found");
+    }
+  }
 
   // ---- navigation -------------------------------------------------------
 
   async function explore(path: string, push: boolean): Promise<void> {
     if (busy) return;
     busy = true;
+    setRescanBusy(true);
     showLoading(path);
     try {
       const node = await api.explore(path);
-      if (push) stack.push(node);
+      if (push || stack.length === 0) stack.push(node);
       else stack[stack.length - 1] = node;
       renderNode();
     } catch (err) {
       showError(path, String(err));
     } finally {
       busy = false;
+      setRescanBusy(false);
     }
   }
 
@@ -112,12 +209,16 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
     try {
       const result = await api.clean([child.path]);
       if (result.failures > 0 && result.trashed === 0 && result.freed === 0) {
-        toast("Nothing was removed — the item may be protected");
+        toast("Nothing was removed — the item may be protected", {
+          kind: "warn",
+        });
       } else {
-        toast(`Trashed ${formatBytes(result.freed)} from ${baseName(child.path)}`);
+        toast(`Trashed ${formatBytes(result.freed)} from ${baseName(child.path)}`, {
+          kind: "success",
+        });
       }
     } catch (err) {
-      toast("Couldn't move the item to Trash");
+      toast("Couldn't move the item to Trash", { kind: "error" });
       console.error(err);
     } finally {
       busy = false;
@@ -126,12 +227,21 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
     }
   }
 
+  function setRescanBusy(b: boolean): void {
+    (rescan as { setBusy?: (v: boolean) => void }).setBusy?.(b);
+  }
+
   // ---- rendering --------------------------------------------------------
 
   function renderNode(): void {
     renderCrumbs();
     const node = stack[stack.length - 1];
     body.replaceChildren();
+
+    const items = node.children ? node.children.length : 0;
+    headSub.textContent = `${formatBytes(node.size)} · ${items} item${
+      items === 1 ? "" : "s"
+    }`;
 
     if (!node.children || node.children.length === 0) {
       body.appendChild(emptyState(node));
@@ -197,7 +307,7 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
     );
 
     const tip = document.createElement("div");
-    tip.className = "lens-tip";
+    tip.className = "lens-tip glass-strong";
 
     const arcByKey = new Map<string, SVGPathElement>();
 
@@ -205,7 +315,7 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
       const path = annulusArc(slice.start, slice.end, RING_INNER, RING_OUTER, {
         class: "lens-arc",
       });
-      path.style.fill = `hsl(${slice.hue} 78% 62%)`;
+      path.style.fill = tintFill(slice.tint);
       path.style.setProperty("--arc-delay", `${Math.random() * 90}ms`);
 
       const key = sliceKey(slice);
@@ -347,12 +457,12 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
     const legend = document.createElement("div");
     legend.className = "lens-legend";
 
-    const head = document.createElement("div");
-    head.className = "lens-legend-head spread";
-    head.innerHTML = `<span class="section-title">Breakdown</span><span class="lens-legend-total">${escapeHTML(
+    const lhead = document.createElement("div");
+    lhead.className = "lens-legend-head spread";
+    lhead.innerHTML = `<span class="section-title">Breakdown</span><span class="lens-legend-total">${escapeHTML(
       formatBytes(node.size)
     )}</span>`;
-    legend.appendChild(head);
+    legend.appendChild(lhead);
 
     const rows = document.createElement("div");
     rows.className = "lens-rows";
@@ -363,7 +473,9 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
       row.className = "lens-row";
       row.dataset.key = sliceKey(slice);
 
-      const swatch = `<span class="lens-swatch" style="background:hsl(${slice.hue} 78% 62%)"></span>`;
+      const swatch = `<span class="lens-swatch" style="background:${tintFill(
+        slice.tint
+      )}"></span>`;
       const isDir = slice.child?.is_dir;
       const name = escapeHTML(slice.label);
 
@@ -382,10 +494,13 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
       bar.className = "lens-row-bar";
       const fill = document.createElement("div");
       fill.className = "lens-row-bar-fill";
-      fill.style.width = `${Math.max(2, slice.fraction * 100)}%`;
-      fill.style.background = `hsl(${slice.hue} 78% 62%)`;
+      fill.style.background = tintFill(slice.tint);
       bar.appendChild(fill);
       row.appendChild(bar);
+      // Grow the bar from zero on mount (motion spec: sizebar fill).
+      requestAnimationFrame(() => {
+        fill.style.width = `${Math.max(2, slice.fraction * 100)}%`;
+      });
 
       const main = row.querySelector(".lens-row-main") as HTMLButtonElement;
       if (isDir) {
@@ -421,7 +536,7 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
     body.replaceChildren();
     const wrap = document.createElement("div");
     wrap.className = "state lens-state";
-    wrap.appendChild(spinner());
+    wrap.appendChild(spinner({ size: 26 }));
     const p = document.createElement("p");
     p.className = "text-dim";
     p.textContent = `Measuring ${baseName(path)}…`;
@@ -432,7 +547,7 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
   function emptyState(node: ExploreNode): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "state lens-state";
-    wrap.appendChild(icon("folder", { size: 44, className: "state-icon" }));
+    wrap.appendChild(icon("folder", { size: 44, className: "lens-state-icon" }));
     const h = document.createElement("h3");
     h.textContent = "Nothing to see here";
     const p = document.createElement("p");
@@ -443,7 +558,11 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
     wrap.append(h, p);
     if (stack.length > 1) {
       wrap.appendChild(
-        button({ label: "Go up", variant: "ghost", onClick: () => goUp(stack.length - 2) })
+        button({
+          label: "Go up",
+          variant: "ghost",
+          onClick: () => goUp(stack.length - 2),
+        })
       );
     }
     return wrap;
@@ -454,7 +573,9 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
     body.replaceChildren();
     const wrap = document.createElement("div");
     wrap.className = "state lens-state";
-    wrap.appendChild(icon("spacelens", { size: 44, className: "state-icon" }));
+    wrap.appendChild(
+      icon("spacelens", { size: 44, className: "lens-state-icon" })
+    );
     const h = document.createElement("h3");
     h.textContent = "Couldn't read that folder";
     const p = document.createElement("p");
@@ -475,19 +596,13 @@ export function renderSpacelens(root: HTMLElement, api: Api): void {
       wrap.appendChild(
         button({
           label: "Go up",
+          variant: "primary",
           onClick: () => goUp(stack.length - 2),
         })
       );
     }
     console.error("explore failed", path, detail);
   }
-
-  // ---- boot -------------------------------------------------------------
-
-  showLoading("Home");
-  resolveHome()
-    .then((home) => explore(home, true))
-    .catch(() => showError("Home", "home directory not found"));
 }
 
 // ---- slice math ---------------------------------------------------------
@@ -527,16 +642,20 @@ function buildSlices(node: ExploreNode): Slice[] {
     const start = cursor;
     const end = cursor + span;
     cursor = end + GAP_DEG;
-    const hue = e.child ? hueFor(e.label, i) : 222;
-    return { ...e, fraction, hue, start, end };
+    // "Other" always takes the dimmest tint; real items walk the ramp.
+    const tint = e.child ? i % TINTS : TINTS - 1;
+    return { ...e, fraction, tint, start, end };
   });
 }
 
-function hueFor(name: string, index: number): number {
-  // Stable, well-spaced hues seeded by name so colors stay put across re-reads.
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return (h % 320) + ((index * 7) % 40);
+// Maps a ramp index to a fill derived purely from the world accent vars, so the
+// dial recolours with the theme and never hardcodes a hue. Steps blend the two
+// accent stops and lighten toward white for the brighter wedges.
+function tintFill(step: number): string {
+  const t = step / (TINTS - 1); // 0 = bright, 1 = deep
+  const mix = Math.round(70 - t * 36); // accent vs accent-2 balance
+  const lift = Math.round(26 - t * 26); // white lift on the brightest wedges
+  return `color-mix(in srgb, var(--accent-2) ${lift}%, color-mix(in srgb, var(--accent) ${mix}%, var(--accent-2)))`;
 }
 
 function sliceKey(s: Slice): string {
@@ -613,73 +732,84 @@ function escapeHTML(s: string): string {
   );
 }
 
-function elFromHTML(html: string): HTMLElement {
-  const tpl = document.createElement("template");
-  tpl.innerHTML = html.trim();
-  return tpl.content.firstElementChild as HTMLElement;
-}
-
 // Screen-scoped styling. Lives here (not global.css) because this file owns the
-// signature visual end-to-end; everything references the shared design tokens.
+// signature visual end-to-end; everything references the shared design tokens
+// and theme vars (--accent, --accent-2, --glow) — no literal colours.
 const STYLE_ID = "lens-styles";
 function injectStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement("style");
   style.id = STYLE_ID;
   style.textContent = `
-.screen-spacelens .lens-head { display: flex; flex-direction: column; gap: 14px; }
-.screen-spacelens .lens-title { margin: 2px 0 0; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.screen-spacelens { gap: 0; }
+
+/* ---- idle hero ---- */
+.lens-hero { transition: opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease); }
+.lens-hero.is-leaving { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+.lens-hero .hero-art { transform: translate(var(--px, 0px), var(--py, 0px)); transition: transform 220ms var(--ease-soft); }
+.lens-cta-pedestal { margin-top: var(--s-6); margin-bottom: var(--s-3); }
+.lens-cta { --size: 132px; }
+.lens-hint { font-size: 13px; color: var(--text-faint); margin-top: var(--s-3); }
+
+/* ---- results frame ---- */
+.lens-results { opacity: 0; }
+.lens-results.is-in { animation: fade-up var(--t-slow) var(--ease) both; opacity: 1; }
+.lens-head { margin-bottom: var(--s-4); align-items: center; }
+.lens-head-left { min-width: 0; }
+.lens-sub { font-variant-numeric: tabular-nums; }
 
 .lens-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .lens-crumb {
-  font: inherit; font-size: 13px; font-weight: 550; color: var(--text-dim);
-  background: transparent; border: 0; padding: 4px 9px; border-radius: 8px;
-  cursor: pointer; transition: background var(--speed) var(--ease), color var(--speed) var(--ease);
+  font: inherit; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--text-dim);
+  background: transparent; border: 0; padding: 2px 8px; border-radius: 10px; max-width: 240px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
-.lens-crumb:hover { color: var(--text); background: var(--surface-2); }
+.lens-crumb:hover { color: var(--text); background: rgba(255,255,255,0.07); }
 .lens-crumb.is-current { color: var(--text); cursor: default; }
 .lens-crumb.is-current:hover { background: transparent; }
-.lens-crumb:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.lens-crumb:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 .lens-crumb-sep { display: inline-flex; color: var(--text-faint); opacity: 0.7; }
 .lens-crumb-sep svg { stroke: currentColor; }
 
-.lens-stage { min-height: 540px; padding: 22px; }
-.lens-body { min-height: 500px; display: flex; }
+.lens-stage { min-height: 520px; padding: var(--s-4); }
+.lens-body { min-height: 480px; display: flex; }
 .lens-state { flex: 1; }
+.lens-state-icon { color: var(--accent-2); opacity: 0.85; }
 
 .lens-layout {
-  flex: 1; display: grid; grid-template-columns: ${SIZE}px minmax(280px, 1fr);
-  gap: 28px; align-items: center;
+  flex: 1; display: grid; grid-template-columns: ${SIZE}px minmax(260px, 1fr);
+  gap: var(--s-5); align-items: center;
 }
-@media (max-width: 980px) {
+@media (max-width: 1040px) {
   .lens-layout { grid-template-columns: 1fr; justify-items: center; }
 }
 
 .lens-dial { position: relative; width: ${SIZE}px; height: ${SIZE}px; }
 .lens-svg { width: 100%; height: 100%; overflow: visible; }
-.lens-track { fill: rgba(255,255,255,0.035); }
+.lens-track { fill: rgba(255,255,255,0.05); }
 
 .lens-arc {
-  stroke: var(--bg-elev); stroke-width: 1.5; stroke-linejoin: round;
+  stroke: rgba(0,0,0,0.28); stroke-width: 1.5; stroke-linejoin: round;
   transform-origin: ${CENTER}px ${CENTER}px;
-  transition: opacity var(--speed) var(--ease), filter var(--speed) var(--ease),
-    transform var(--speed) var(--ease);
+  transition: opacity var(--t-base) var(--ease), filter var(--t-base) var(--ease),
+    transform var(--t-base) var(--ease);
   animation: lens-arc-in 420ms var(--ease) both; animation-delay: var(--arc-delay, 0ms);
 }
 @keyframes lens-arc-in { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
 .lens-arc.is-interactive { cursor: pointer; }
-.lens-arc.is-dim { opacity: 0.32; }
-.lens-arc.is-active { filter: brightness(1.12) saturate(1.1); transform: scale(1.035); }
+.lens-arc.is-dim { opacity: 0.3; }
+.lens-arc.is-active { filter: brightness(1.14) saturate(1.12); transform: scale(1.035); }
 .lens-arc:focus { outline: none; }
-.lens-arc:focus-visible { stroke: var(--text); stroke-width: 2.5; }
+.lens-arc:focus-visible { stroke: #fff; stroke-width: 2.5; }
 
 .lens-hub-bg {
-  fill: var(--bg-elev); stroke: var(--border); stroke-width: 1;
-  transition: fill var(--speed) var(--ease), stroke var(--speed) var(--ease);
+  fill: rgba(255,255,255,0.05); stroke: var(--hairline); stroke-width: 1;
+  transition: fill var(--t-base) var(--ease), stroke var(--t-base) var(--ease);
 }
 .lens-hub.is-up { cursor: pointer; }
-.lens-hub.is-up:hover .lens-hub-bg { fill: var(--surface-2); stroke: var(--accent-ring); }
-.lens-hub.is-up:focus-visible .lens-hub-bg { stroke: var(--accent); stroke-width: 2; }
+.lens-hub.is-up:hover .lens-hub-bg { fill: color-mix(in srgb, var(--accent) 18%, transparent); stroke: var(--accent-2); }
+.lens-hub.is-up:focus-visible .lens-hub-bg { stroke: var(--accent-2); stroke-width: 2; }
 
 .lens-center {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -687,8 +817,9 @@ function injectStyles(): void {
   display: flex; flex-direction: column; gap: 3px; align-items: center;
 }
 .lens-center-size {
-  font-size: 26px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05;
-  background: var(--accent-grad); -webkit-background-clip: text; background-clip: text;
+  font-size: 28px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05;
+  background: linear-gradient(150deg, var(--accent-2), #fff);
+  -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
 }
 .lens-center-name {
@@ -700,34 +831,34 @@ function injectStyles(): void {
 .lens-tip {
   position: absolute; pointer-events: none; z-index: 5;
   transform: translate(14px, -50%); padding: 9px 12px; min-width: 130px;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: var(--shadow-lg); opacity: 0; transition: opacity var(--speed) var(--ease);
+  border-radius: 14px;
+  opacity: 0; transition: opacity var(--t-base) var(--ease);
 }
 .lens-tip.is-on { opacity: 1; }
 .lens-tip-name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px;
   max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lens-tip-size { font-size: 12px; color: var(--text-dim); }
+.lens-tip-size { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .lens-tip-hint { font-size: 11px; margin-top: 3px; }
 
 .lens-legend { width: 100%; align-self: stretch; display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
 .lens-legend-head { align-items: baseline; }
-.lens-legend-total { font-size: 13px; font-weight: 650; color: var(--text); }
-.lens-rows { display: flex; flex-direction: column; gap: 2px; max-height: 460px; overflow-y: auto; padding-right: 4px; }
+.lens-legend-total { font-size: 13px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.lens-rows { display: flex; flex-direction: column; gap: 2px; max-height: 440px; overflow-y: auto; padding-right: 4px; }
 .lens-rows::-webkit-scrollbar { width: 8px; }
-.lens-rows::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 8px; }
+.lens-rows::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 8px; }
 
 .lens-row {
-  position: relative; border-radius: var(--radius); padding: 7px 8px 9px;
-  transition: background var(--speed) var(--ease);
+  position: relative; border-radius: 14px; padding: 7px 8px 9px;
+  transition: background var(--t-fast) var(--ease);
 }
-.lens-row:hover, .lens-row.is-active { background: var(--surface); }
+.lens-row:hover, .lens-row.is-active { background: rgba(255,255,255,0.06); }
 .lens-row-main {
   display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px;
   width: 100%; background: transparent; border: 0; padding: 0; font: inherit; color: var(--text);
   text-align: left; cursor: pointer;
 }
 .lens-row-main[disabled] { cursor: default; }
-.lens-row-main:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 3px; border-radius: 6px; }
+.lens-row-main:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; border-radius: 6px; }
 .lens-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; box-shadow: 0 0 0 1px rgba(0,0,0,0.25) inset; }
 .lens-row-name {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0;
@@ -737,19 +868,19 @@ function injectStyles(): void {
 .lens-row-icon { display: inline-flex; color: var(--text-dim); flex: none; }
 .lens-row-icon svg { stroke: currentColor; }
 .lens-row-size { font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--text-dim); white-space: nowrap; }
-.lens-row-bar { margin: 7px 0 0; height: 3px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
-.lens-row-bar-fill { height: 100%; border-radius: 3px; transition: width var(--speed-slow) var(--ease); }
+.lens-row-bar { margin: 7px 0 0; height: 3px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.lens-row-bar-fill { height: 100%; width: 0; border-radius: 3px; transition: width var(--t-slow) var(--ease); }
 
 .lens-row-trash {
   position: absolute; top: 6px; right: 6px; width: 28px; height: 28px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: 0; border-radius: 8px; color: var(--text-faint);
+  background: transparent; border: 0; border-radius: 9px; color: var(--text-faint);
   cursor: pointer; opacity: 0; transform: scale(0.9);
-  transition: opacity var(--speed) var(--ease), background var(--speed) var(--ease),
-    color var(--speed) var(--ease), transform var(--speed) var(--ease);
+  transition: opacity var(--t-fast) var(--ease), background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
 }
 .lens-row:hover .lens-row-trash, .lens-row:focus-within .lens-row-trash { opacity: 1; transform: scale(1); }
-.lens-row-trash:hover { background: rgba(255, 93, 108, 0.16); color: var(--danger); }
+.lens-row-trash:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
 .lens-row-trash:focus-visible { outline: 2px solid var(--danger); outline-offset: 1px; opacity: 1; }
 .lens-row-trash svg { stroke: currentColor; }
 `;

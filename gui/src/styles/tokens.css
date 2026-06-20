@@ -1,54 +1,145 @@
-/* Sweep design tokens — a premium, CleanMyMac-grade dark system.
-   Every custom property in the contract is defined here. Screens and
-   components reference these names exclusively; raw colors should not
-   appear elsewhere. */
+/* Sweep design tokens — the CleanMyMac-grade colour-world system.
+
+   Neutral, theme-independent tokens live in :root. Each screen is its own
+   full-bleed colour world: [data-theme="<route id>"] overrides only the four
+   world vars (--accent, --accent-2, --glow, --world-grad). Screens and
+   components read these names exclusively — no raw hex outside this file. */
 
 :root {
   color-scheme: dark;
 
-  /* --- backgrounds: deep near-black, layered upward into glassy surfaces --- */
-  --bg: #07080b;
-  --bg-elev: #0d0f15;
-  --surface: rgba(28, 32, 43, 0.72);
-  --surface-2: rgba(38, 43, 56, 0.78);
-  --border: rgba(255, 255, 255, 0.08);
+  /* backgrounds — deep neutral behind the sidebar; worlds paint the content */
+  --bg: #0a0b12;
+  --bg-elev: #11131c;
 
-  /* --- text: a clean near-white that softens into dim then faint --- */
-  --text: #f4f6fb;
-  --text-dim: #99a1b3;
-  --text-faint: #5a6273;
+  /* text on dark glass over saturated worlds */
+  --text: #ffffff;
+  --text-dim: rgba(255, 255, 255, 0.72);
+  --text-faint: rgba(255, 255, 255, 0.48);
+  --hairline: rgba(255, 255, 255, 0.12);
 
-  /* --- accent: a vivid violet -> cyan gradient pair --- */
-  --accent: #7c5cff;
-  --accent-2: #21d4fd;
-
-  /* --- semantic colors --- */
-  --ok: #2fd07f;
+  /* semantic — stable across worlds */
+  --ok: #34e89e;
   --warn: #ffc24b;
   --danger: #ff5d6c;
-  --personal: #ff8a5b;
 
-  /* --- shape --- */
-  --radius: 11px;
-  --radius-lg: 20px;
+  /* shape */
+  --radius-card: 22px;
+  --radius-tile: 18px;
+  --radius-pill: 999px;
+
+  /* spacing — 8pt grid */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 16px;
+  --s-4: 24px;
+  --s-5: 32px;
+  --s-6: 48px;
+  --s-7: 64px;
   --gap: 16px;
 
-  /* --- elevation: soft, large, diffused shadows --- */
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.32);
-  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.45),
-    0 40px 80px rgba(0, 0, 0, 0.55);
-
-  /* --- type stacks: SF-style system + mono --- */
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+  /* type stacks */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
     "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo,
-    Consolas, monospace;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  /* --- internal helpers (derived, not in the public contract) --- */
+  /* motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-fast: 150ms;
+  --t-base: 220ms;
+  --t-slow: 300ms;
+
+  /* neutral default world so a screen renders even before a theme is set */
+  --accent: #7b5bff;
+  --accent-2: #9d7bff;
+  --glow: rgba(123, 91, 255, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #6a45e6 0%, #34197d 46%, #160a36 100%);
+
+  /* Compatibility aliases — legacy token names still referenced by screens
+     that haven't been migrated to the world system yet. They map onto the new
+     tokens so those screens keep rendering; remove once every screen is on the
+     glass/world vocabulary. */
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-2: rgba(255, 255, 255, 0.1);
+  --border: var(--hairline);
+  --personal: #ff8a5b;
+  --radius: 12px;
+  --radius-lg: var(--radius-card);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.28);
+  --speed: var(--t-fast);
+  --speed-slow: var(--t-base);
   --accent-grad: linear-gradient(135deg, var(--accent), var(--accent-2));
-  --accent-soft: rgba(124, 92, 255, 0.16);
-  --accent-ring: rgba(124, 92, 255, 0.45);
-  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --speed: 180ms;
-  --speed-slow: 240ms;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-ring: var(--glow);
+  --chip-color: var(--accent);
+}
+
+/* ============================================================
+   The 8 colour worlds
+   ============================================================ */
+
+/* dashboard — Violet (Smart Care): the brand hero world */
+[data-theme="dashboard"] {
+  --accent: #7b5bff;
+  --accent-2: #9d7bff;
+  --glow: rgba(123, 91, 255, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #6a45e6 0%, #34197d 46%, #160a36 100%);
+}
+
+/* cleanup — Green (Emerald → forest) */
+[data-theme="cleanup"] {
+  --accent: #19c37d;
+  --accent-2: #34e89e;
+  --glow: rgba(25, 195, 125, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #12a86a 0%, #0a6b45 46%, #052b20 100%);
+}
+
+/* applications — Blue (Azure → navy) */
+[data-theme="applications"] {
+  --accent: #2e8bff;
+  --accent-2: #5fa8ff;
+  --glow: rgba(46, 139, 255, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #2474ec 0%, #12397f 46%, #08183c 100%);
+}
+
+/* privacy — Magenta/Pink (Protection) */
+[data-theme="privacy"] {
+  --accent: #ff3d8b;
+  --accent-2: #ff6fae;
+  --glow: rgba(255, 61, 139, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #e63089 0%, #8e1457 46%, #3a0c27 100%);
+}
+
+/* files — Teal (Duplicates) */
+[data-theme="files"] {
+  --accent: #1fc8c8;
+  --accent-2: #48e0dc;
+  --glow: rgba(31, 200, 200, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #14b4b4 0%, #0a5f66 46%, #042a2e 100%);
+}
+
+/* spacelens — Deep Purple (Orchid → deep purple) */
+[data-theme="spacelens"] {
+  --accent: #9b5cf0;
+  --accent-2: #b985ff;
+  --glow: rgba(155, 92, 240, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #8a45e6 0%, #4b1e96 46%, #1f0c44 100%);
+}
+
+/* maintenance — Orange/Amber (Performance) */
+[data-theme="maintenance"] {
+  --accent: #ff8a2b;
+  --accent-2: #ffb15c;
+  --glow: rgba(255, 138, 43, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #f0741c 0%, #b5400e 46%, #401608 100%);
+}
+
+/* schedule — Cyan/Indigo */
+[data-theme="schedule"] {
+  --accent: #2bd4ff;
+  --accent-2: #6f8bff;
+  --glow: rgba(43, 212, 255, 0.45);
+  --world-grad: radial-gradient(125% 120% at 50% 8%, #1fb6ec 0%, #2b3aa0 46%, #0e1240 100%);
 }

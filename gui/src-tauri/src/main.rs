@@ -5,6 +5,25 @@ mod commands;
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            // Real macOS Liquid Glass: a frosted NSVisualEffectView behind the
+            // window. The body/sidebar are transparent so it shows through the
+            // menu (Apple Music style); the content column stays opaque.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = apply_vibrancy(
+                        &win,
+                        NSVisualEffectMaterial::Sidebar,
+                        Some(NSVisualEffectState::Active),
+                        None,
+                    );
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::scan,
             commands::clean,

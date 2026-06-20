@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <!-- ambient world halo behind the orb -->
+    <radialGradient id="dashHalo" cx="50%" cy="46%" r="52%">
+      <stop offset="0" stop-color="#a98bff" stop-opacity="0.62"/>
+      <stop offset="55%" stop-color="#7b5bff" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#7b5bff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- main glossy violet body: light top-left -> deep bottom-right -->
+    <radialGradient id="dashBody" cx="36%" cy="28%" r="82%">
+      <stop offset="0" stop-color="#d6c8ff"/>
+      <stop offset="26%" stop-color="#a78bff"/>
+      <stop offset="58%" stop-color="#7b5bff"/>
+      <stop offset="82%" stop-color="#4a2aa8"/>
+      <stop offset="100%" stop-color="#2a1568"/>
+    </radialGradient>
+
+    <!-- rim light: bright crescent on the lower-right edge -->
+    <radialGradient id="dashRim" cx="68%" cy="74%" r="60%">
+      <stop offset="0" stop-color="#c9b6ff" stop-opacity="0"/>
+      <stop offset="78%" stop-color="#c9b6ff" stop-opacity="0"/>
+      <stop offset="92%" stop-color="#d9ccff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.35"/>
+    </radialGradient>
+
+    <!-- inner recessed dish to give the disc volume -->
+    <radialGradient id="dashDish" cx="42%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#5a39c4" stop-opacity="0.0"/>
+      <stop offset="62%" stop-color="#3b1f8f" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#22115e" stop-opacity="0.70"/>
+    </radialGradient>
+
+    <!-- top specular sheen -->
+    <linearGradient id="dashSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.92"/>
+      <stop offset="60%" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- inner glassy plate the checkmark sits on -->
+    <radialGradient id="dashPlate" cx="40%" cy="32%" r="78%">
+      <stop offset="0" stop-color="#ede6ff"/>
+      <stop offset="50%" stop-color="#c7b4ff"/>
+      <stop offset="100%" stop-color="#8868f0"/>
+    </radialGradient>
+
+    <linearGradient id="dashCheck" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7b5bff"/>
+      <stop offset="100%" stop-color="#4d2db8"/>
+    </linearGradient>
+
+    <!-- soft contact shadow -->
+    <filter id="dashShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="11"/>
+    </filter>
+    <!-- gentle blur for the floating glint orbs -->
+    <filter id="dashGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+
+  <!-- world halo -->
+  <circle cx="120" cy="112" r="104" fill="url(#dashHalo)"/>
+
+  <!-- cast shadow on the floor -->
+  <ellipse cx="122" cy="198" rx="70" ry="17" fill="#16093a" opacity="0.55" filter="url(#dashShadow)"/>
+
+  <!-- main glossy orb -->
+  <circle cx="120" cy="114" r="80" fill="url(#dashBody)"/>
+  <!-- rim light crescent -->
+  <circle cx="120" cy="114" r="80" fill="url(#dashRim)"/>
+  <!-- recessed dish shading -->
+  <circle cx="120" cy="114" r="80" fill="url(#dashDish)"/>
+  <!-- thin bright edge -->
+  <circle cx="120" cy="114" r="79" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="1.5"/>
+
+  <!-- inner glassy plate -->
+  <circle cx="120" cy="114" r="54" fill="url(#dashPlate)" opacity="0.96"/>
+  <circle cx="120" cy="114" r="54" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="1.2"/>
+
+  <!-- checkmark -->
+  <path d="M97 116l16 17 33-40" fill="none" stroke="url(#dashCheck)" stroke-width="13"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M97 116l16 17 33-40" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="3.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- big top specular highlight -->
+  <ellipse cx="98" cy="74" rx="44" ry="26" fill="url(#dashSheen)" opacity="0.78" transform="rotate(-18 98 74)"/>
+  <!-- tiny crisp hotspot -->
+  <ellipse cx="84" cy="64" rx="9" ry="5" fill="#ffffff" opacity="0.85" transform="rotate(-18 84 64)"/>
+
+  <!-- floating glossy sparkle orbs -->
+  <circle cx="190" cy="62" r="9" fill="#bda6ff" filter="url(#dashGlow)" opacity="0.9"/>
+  <circle cx="188" cy="60" r="3.4" fill="#ffffff" opacity="0.95"/>
+  <circle cx="52" cy="158" r="6.5" fill="#9d7bff" filter="url(#dashGlow)" opacity="0.85"/>
+  <circle cx="50.5" cy="156.5" r="2.4" fill="#ffffff" opacity="0.9"/>
+  <circle cx="196" cy="150" r="4.5" fill="#c9b6ff" filter="url(#dashGlow)" opacity="0.8"/>
+</svg>

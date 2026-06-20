@@ -1,12 +1,14 @@
-// Cleanup screen. Scans system caches, app caches, dev tools and Xcode, then
-// presents each report as a collapsible card with a checkable list of findings.
-// A master total drives "Clean selected", which re-confirms before removing
-// anything and calls clean(selectedPaths, false). Risky findings start
-// unchecked so a single sweep never trashes something it shouldn't.
+// Cleanup screen — the Green world. An idle hero (eyebrow → glossy broom → title
+// → subtitle → circular Scan CTA) cross-fades into a results grid of glass
+// category cards. Each card holds a checkable list of findings; a master total
+// drives the pill "Clean" CTA, which re-confirms before calling clean(paths,
+// false). Risky findings start unchecked so a single sweep never trashes
+// something it shouldn't. Data wiring (scan/clean) is unchanged.
 
 import type { Api } from "../api";
 import type { Finding, Report } from "../types";
-import { button, formatBytes, spinner, toast } from "../components";
+import { button, formatBytes, icon, spinner, toast } from "../components";
+import heroRaw from "../assets/illustrations/cleanup.svg?raw";
 
 const TARGETS = ["system-caches", "app-caches", "dev-tools", "xcode"];
 
@@ -14,22 +16,22 @@ const TARGET_META: Record<string, { title: string; blurb: string; icon: string }
   "system-caches": {
     title: "System Caches",
     blurb: "Temporary files the system rebuilds on demand",
-    icon: iconCpu(),
+    icon: "broom",
   },
   "app-caches": {
     title: "Application Caches",
     blurb: "Per-app scratch data that apps recreate when needed",
-    icon: iconApps(),
+    icon: "applications",
   },
   "dev-tools": {
     title: "Developer Tools",
     blurb: "Package manager and build tool caches",
-    icon: iconTerminal(),
+    icon: "files",
   },
   xcode: {
     title: "Xcode",
     blurb: "Derived data, archives and simulator leftovers",
-    icon: iconHammer(),
+    icon: "maintenance",
   },
 };
 
@@ -43,101 +45,215 @@ interface Row {
 export function renderCleanup(root: HTMLElement, api: Api): void {
   injectStyles();
 
+  type Phase = "idle" | "scanning" | "results" | "empty" | "error";
+  let phase: Phase = "idle";
+
   const el = document.createElement("div");
-  el.className = "screen screen-cleanup cl";
+  el.className = "screen cl";
   el.innerHTML = `
-    <header class="cl-head">
-      <div>
-        <h2 class="cl-title">Cleanup</h2>
-        <p class="cl-sub">Reclaim space from caches and build artifacts. Safe items are pre-selected.</p>
-      </div>
-    </header>
-    <div class="cl-body" data-body></div>
+    <section class="cl-hero" data-hero>
+      <div class="cl-eyebrow">Cleanup</div>
+      <div class="hero-art cl-art">${heroRaw}</div>
+      <h1 class="cl-title">Reclaim space, safely.</h1>
+      <p class="cl-sub">Sweep caches and build artifacts you don't need. Safe items are pre-selected — nothing leaves your Trash.</p>
+      <div class="cl-cta-wrap" data-cta></div>
+      <p class="cl-hint" data-hint>Nothing is deleted — items move to Trash.</p>
+    </section>
+    <section class="cl-results" data-results hidden></section>
   `;
   root.appendChild(el);
 
-  const body = el.querySelector<HTMLElement>("[data-body]")!;
-  const rows: Row[] = [];
-  let footer: HTMLElement | null = null;
+  const heroEl = el.querySelector<HTMLElement>("[data-hero]")!;
+  const ctaWrap = el.querySelector<HTMLElement>("[data-cta]")!;
+  const hintEl = el.querySelector<HTMLElement>("[data-hint]")!;
+  const results = el.querySelector<HTMLElement>("[data-results]")!;
 
-  void load();
+  const rows: Row[] = [];
+  let cleanPill: HTMLButtonElement | null = null;
+  let totalEl: HTMLElement | null = null;
+  let countEl: HTMLElement | null = null;
+
+  renderScanCta();
+
+  function renderScanCta(): void {
+    ctaWrap.replaceChildren();
+    const scan = document.createElement("button");
+    scan.type = "button";
+    scan.className = "cta-circle cl-scan";
+    scan.textContent = "Scan";
+    scan.setAttribute("aria-label", "Scan for reclaimable space");
+    scan.addEventListener("click", () => void load());
+    ctaWrap.appendChild(scan);
+  }
+
+  function showHero(scanning: boolean): void {
+    phase = scanning ? "scanning" : phase;
+    results.hidden = true;
+    heroEl.hidden = false;
+    heroEl.classList.remove("is-out");
+    if (scanning) {
+      ctaWrap.replaceChildren();
+      const sp = spinner({ size: 28 });
+      sp.classList.add("cl-scan-spin");
+      ctaWrap.appendChild(sp);
+      hintEl.textContent = "Scanning caches and build artifacts…";
+    } else {
+      hintEl.textContent = "Nothing is deleted — items move to Trash.";
+    }
+  }
+
+  // Cross-fade the hero out and the results grid in (§5).
+  function crossToResults(): void {
+    heroEl.classList.add("is-out");
+    window.setTimeout(() => {
+      heroEl.hidden = true;
+      results.hidden = false;
+      results.classList.remove("is-in");
+      requestAnimationFrame(() => results.classList.add("is-in"));
+    }, 200);
+  }
 
   async function load(): Promise<void> {
     rows.length = 0;
-    body.innerHTML = "";
-    body.appendChild(loadingState());
+    cleanPill = null;
+    totalEl = null;
+    countEl = null;
+    showHero(true);
 
     let reports: Report[];
     try {
       reports = await api.scan(TARGETS);
     } catch (err) {
-      body.innerHTML = "";
-      body.appendChild(errorState(message(err), () => void load()));
+      phase = "error";
+      renderScanCta();
+      heroEl.classList.remove("is-out");
+      hintEl.textContent = "";
+      results.innerHTML = "";
+      results.appendChild(errorState(message(err), () => void load()));
+      crossToResults();
       return;
     }
 
     const withFindings = reports.filter((r) => r.findings.length > 0);
-    body.innerHTML = "";
 
     if (withFindings.length === 0) {
-      body.appendChild(emptyState());
+      phase = "empty";
+      results.innerHTML = "";
+      results.appendChild(emptyState(() => void load()));
+      crossToResults();
       return;
     }
 
-    for (const report of withFindings) {
-      body.appendChild(buildCard(report));
-    }
+    phase = "results";
+    const grandTotal = withFindings.reduce(
+      (acc, r) => acc + r.findings.reduce((s, f) => s + f.size, 0),
+      0
+    );
 
-    footer = buildFooter();
-    body.appendChild(footer);
+    results.innerHTML = "";
+    results.appendChild(buildHead());
+
+    const grid = document.createElement("div");
+    grid.className = "grid cl-grid";
+    let delay = 0;
+    for (const report of withFindings) {
+      const card = buildCard(report, grandTotal);
+      card.style.animationDelay = `${delay}ms`;
+      delay += 40;
+      grid.appendChild(card);
+    }
+    results.appendChild(grid);
+
+    crossToResults();
     syncTotals();
   }
 
-  function buildCard(report: Report): HTMLElement {
+  function buildHead(): HTMLElement {
+    const head = document.createElement("div");
+    head.className = "results-head cl-head";
+    head.innerHTML = `
+      <div class="cl-head-info">
+        <h2>Reclaimable space</h2>
+        <p class="results-sub"><span data-count>Nothing selected</span> · <span class="cl-total" data-total>0 B</span> selected</p>
+      </div>
+    `;
+
+    const actions = document.createElement("div");
+    actions.className = "results-actions";
+
+    const rescan = button({
+      label: "Rescan",
+      variant: "ghost",
+      icon: "refresh",
+      onClick: () => void load(),
+    });
+
+    const clean = document.createElement("button");
+    clean.type = "button";
+    clean.className = "cta-pill cl-clean";
+    clean.innerHTML = `<span class="cl-clean-label">Clean</span>`;
+    clean.addEventListener("click", () => void runClean());
+
+    actions.appendChild(rescan);
+    actions.appendChild(clean);
+    head.appendChild(actions);
+
+    cleanPill = clean;
+    totalEl = head.querySelector<HTMLElement>("[data-total]");
+    countEl = head.querySelector<HTMLElement>("[data-count]");
+    return head;
+  }
+
+  function buildCard(report: Report, grandTotal: number): HTMLElement {
     const meta = TARGET_META[report.target] ?? {
       title: report.target,
       blurb: "",
-      icon: iconApps(),
+      icon: "broom",
     };
 
     const findings = [...report.findings].sort((a, b) => b.size - a.size);
     const groupTotal = findings.reduce((acc, f) => acc + f.size, 0);
-
     const cardRows: Row[] = [];
 
     const card = document.createElement("section");
-    card.className = "cl-card";
-    card.dataset.open = "true";
+    card.className = "glass-card cl-card";
 
-    const head = document.createElement("button");
-    head.type = "button";
+    const head = document.createElement("div");
     head.className = "cl-card-head";
-    head.setAttribute("aria-expanded", "true");
     head.innerHTML = `
-      <span class="cl-card-icon">${meta.icon}</span>
+      <span class="cl-card-icon"></span>
       <span class="cl-card-meta">
         <span class="cl-card-title">${escapeHtml(meta.title)}</span>
         <span class="cl-card-blurb">${escapeHtml(meta.blurb)}</span>
       </span>
       <span class="cl-card-size" data-group-size>${formatBytes(groupTotal)}</span>
-      <span class="cl-card-count">${findings.length} item${findings.length === 1 ? "" : "s"}</span>
-      <span class="cl-chevron">${iconChevron()}</span>
     `;
+    head.querySelector(".cl-card-icon")!.appendChild(icon(meta.icon, { size: 20 }));
+
+    // Per-card share of the grand total — a thin sizebar under the header.
+    const share = grandTotal > 0 ? (groupTotal / grandTotal) * 100 : 0;
+    const bar = document.createElement("div");
+    bar.className = "sizebar cl-card-bar";
+    bar.innerHTML = `<div class="sizebar-fill"></div>`;
+    const fill = bar.querySelector<HTMLElement>(".sizebar-fill")!;
+    requestAnimationFrame(() => {
+      fill.style.width = `${Math.max(3, share)}%`;
+    });
 
     const list = document.createElement("div");
-    list.className = "cl-list";
+    list.className = "list cl-list";
 
-    // Per-card select-all toggle lives in its own header row.
+    // Per-card "Select all" row.
     const selectAll = document.createElement("label");
-    selectAll.className = "cl-item cl-item-all";
+    selectAll.className = "row cl-item cl-item-all is-interactive";
     const allBox = document.createElement("input");
     allBox.type = "checkbox";
-    allBox.className = "cl-check";
+    allBox.className = "check cl-check";
     allBox.setAttribute("aria-label", `Select all in ${meta.title}`);
-    selectAll.appendChild(allBox);
     const allText = document.createElement("span");
-    allText.className = "cl-item-label";
-    allText.innerHTML = `<span class="cl-item-name">Select all</span>`;
+    allText.className = "row-main";
+    allText.innerHTML = `<span class="row-title">Select all</span>`;
+    selectAll.appendChild(allBox);
     selectAll.appendChild(allText);
     list.appendChild(selectAll);
 
@@ -156,7 +272,7 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
         if (r.checked !== allBox.checked) {
           r.checked = allBox.checked;
           r.input.checked = allBox.checked;
-          r.row.classList.toggle("is-checked", allBox.checked);
+          r.row.classList.toggle("is-selected", allBox.checked);
         }
       }
       syncTotals();
@@ -169,13 +285,8 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
     }
     syncSelectAll();
 
-    head.addEventListener("click", () => {
-      const open = card.dataset.open === "true";
-      card.dataset.open = open ? "false" : "true";
-      head.setAttribute("aria-expanded", open ? "false" : "true");
-    });
-
     card.appendChild(head);
+    card.appendChild(bar);
     card.appendChild(list);
     return card;
   }
@@ -184,24 +295,24 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
     const checked = !finding.risky;
 
     const row = document.createElement("label");
-    row.className = "cl-item";
-    if (checked) row.classList.add("is-checked");
+    row.className = "row cl-item is-interactive";
+    if (checked) row.classList.add("is-selected");
 
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.className = "cl-check";
+    input.className = "check cl-check";
     input.checked = checked;
     input.setAttribute("aria-label", prettyPath(finding.path));
 
-    const label = document.createElement("span");
-    label.className = "cl-item-label";
+    const main = document.createElement("span");
+    main.className = "row-main";
 
     const badges: string[] = [];
-    if (finding.risky) badges.push(`<span class="cl-badge cl-badge-risky">Risky</span>`);
-    if (finding.stale) badges.push(`<span class="cl-badge cl-badge-stale">Stale</span>`);
+    if (finding.risky) badges.push(`<span class="chip is-danger cl-badge">Risky</span>`);
+    if (finding.stale) badges.push(`<span class="chip is-warn cl-badge">Stale</span>`);
 
-    label.innerHTML = `
-      <span class="cl-item-name" title="${escapeHtml(finding.path)}">${escapeHtml(prettyPath(finding.path))}</span>
+    main.innerHTML = `
+      <span class="row-title mono" title="${escapeHtml(finding.path)}">${escapeHtml(prettyPath(finding.path))}</span>
       <span class="cl-item-meta">
         ${badges.join("")}
         ${finding.note ? `<span class="cl-item-note">${escapeHtml(finding.note)}</span>` : ""}
@@ -209,56 +320,21 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
     `;
 
     const size = document.createElement("span");
-    size.className = "cl-item-size";
+    size.className = "row-size cl-item-size";
     size.textContent = formatBytes(finding.size);
 
     row.appendChild(input);
-    row.appendChild(label);
+    row.appendChild(main);
     row.appendChild(size);
 
     const r: Row = { finding, checked, input, row };
     input.addEventListener("change", () => {
       r.checked = input.checked;
-      row.classList.toggle("is-checked", input.checked);
+      row.classList.toggle("is-selected", input.checked);
       onChange();
     });
 
     return r;
-  }
-
-  function buildFooter(): HTMLElement {
-    const bar = document.createElement("div");
-    bar.className = "cl-footer";
-
-    const summary = document.createElement("div");
-    summary.className = "cl-footer-summary";
-    summary.innerHTML = `
-      <span class="cl-footer-size" data-total>0 B</span>
-      <span class="cl-footer-count" data-count>Nothing selected</span>
-    `;
-
-    const actions = document.createElement("div");
-    actions.className = "cl-footer-actions";
-
-    const rescan = button({
-      label: "Rescan",
-      variant: "ghost",
-      onClick: () => void load(),
-    });
-
-    const clean = button({
-      label: "Clean selected",
-      variant: "primary",
-      onClick: () => void runClean(),
-    });
-    clean.classList.add("cl-clean-btn");
-    clean.dataset.clean = "true";
-
-    actions.appendChild(rescan);
-    actions.appendChild(clean);
-    bar.appendChild(summary);
-    bar.appendChild(actions);
-    return bar;
   }
 
   function selected(): Row[] {
@@ -266,21 +342,20 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
   }
 
   function syncTotals(): void {
-    if (!footer) return;
+    if (!cleanPill || !totalEl || !countEl) return;
     const picked = selected();
     const total = picked.reduce((acc, r) => acc + r.finding.size, 0);
 
-    const totalEl = footer.querySelector<HTMLElement>("[data-total]")!;
-    const countEl = footer.querySelector<HTMLElement>("[data-count]")!;
-    const cleanBtn = footer.querySelector<HTMLButtonElement>("[data-clean]")!;
-
     totalEl.textContent = formatBytes(total);
     countEl.textContent = picked.length
-      ? `${picked.length} item${picked.length === 1 ? "" : "s"} selected`
+      ? `${picked.length} item${picked.length === 1 ? "" : "s"}`
       : "Nothing selected";
 
-    cleanBtn.disabled = picked.length === 0;
-    cleanBtn.classList.toggle("is-disabled", picked.length === 0);
+    const empty = picked.length === 0;
+    cleanPill.disabled = empty;
+    cleanPill.setAttribute("aria-disabled", String(empty));
+    const label = cleanPill.querySelector(".cl-clean-label");
+    if (label) label.textContent = empty ? "Clean" : `Clean ${formatBytes(total)}`;
   }
 
   async function runClean(): Promise<void> {
@@ -293,13 +368,13 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
     const ok = await confirmClean(picked.length, total, riskyCount);
     if (!ok) return;
 
-    const cleanBtn = footer?.querySelector<HTMLButtonElement>("[data-clean]");
     const paths = picked.map((r) => r.finding.path);
 
-    if (cleanBtn) {
-      cleanBtn.disabled = true;
-      cleanBtn.classList.add("is-busy");
-      cleanBtn.textContent = "Cleaning…";
+    if (cleanPill) {
+      cleanPill.disabled = true;
+      cleanPill.classList.add("is-busy");
+      const label = cleanPill.querySelector(".cl-clean-label");
+      if (label) label.textContent = "Cleaning…";
     }
 
     try {
@@ -312,11 +387,11 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
       }
     } catch (err) {
       toast(`Cleanup failed: ${message(err)}`);
-      if (cleanBtn) {
-        cleanBtn.disabled = false;
-        cleanBtn.classList.remove("is-busy");
-        cleanBtn.textContent = "Clean selected";
+      if (cleanPill) {
+        cleanPill.disabled = false;
+        cleanPill.classList.remove("is-busy");
       }
+      syncTotals();
       return;
     }
 
@@ -327,35 +402,26 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
 
 // --- transient states ---
 
-function loadingState(): HTMLElement {
+function emptyState(onRescan: () => void): HTMLElement {
   const el = document.createElement("div");
-  el.className = "cl-state";
-  el.appendChild(spinner());
-  const p = document.createElement("p");
-  p.className = "cl-state-text";
-  p.textContent = "Scanning caches and build artifacts…";
-  el.appendChild(p);
-  return el;
-}
-
-function emptyState(): HTMLElement {
-  const el = document.createElement("div");
-  el.className = "cl-state cl-state-empty";
+  el.className = "state cl-state";
   el.innerHTML = `
-    <div class="cl-state-glyph">${iconSparkle()}</div>
-    <h3 class="cl-state-title">All clean</h3>
-    <p class="cl-state-text">There's nothing to reclaim right now. Check back after a few days of use.</p>
+    <div class="cl-state-glyph cl-state-glyph-ok"></div>
+    <h3>All clean</h3>
+    <p>There's nothing to reclaim right now. Check back after a few days of use.</p>
   `;
+  el.querySelector(".cl-state-glyph")!.appendChild(icon("check", { size: 30 }));
+  el.appendChild(button({ label: "Rescan", variant: "ghost", icon: "refresh", onClick: onRescan }));
   return el;
 }
 
 function errorState(msg: string, onRetry: () => void): HTMLElement {
   const el = document.createElement("div");
-  el.className = "cl-state cl-state-error";
+  el.className = "state cl-state";
   el.innerHTML = `
     <div class="cl-state-glyph cl-state-glyph-warn">${iconWarn()}</div>
-    <h3 class="cl-state-title">Scan failed</h3>
-    <p class="cl-state-text">${escapeHtml(msg)}</p>
+    <h3>Scan failed</h3>
+    <p>${escapeHtml(msg)}</p>
   `;
   el.appendChild(button({ label: "Try again", variant: "ghost", onClick: onRetry }));
   return el;
@@ -371,7 +437,7 @@ function confirmClean(count: number, total: number, riskyCount: number): Promise
     overlay.setAttribute("aria-modal", "true");
 
     const dialog = document.createElement("div");
-    dialog.className = "cl-modal";
+    dialog.className = "glass-strong cl-modal";
     dialog.innerHTML = `
       <h3 class="cl-modal-title">Clean ${count} item${count === 1 ? "" : "s"}?</h3>
       <p class="cl-modal-text">
@@ -450,26 +516,6 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// --- inline icons ---
-
-function iconChevron(): string {
-  return `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
-}
-function iconCpu(): string {
-  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>`;
-}
-function iconApps(): string {
-  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`;
-}
-function iconTerminal(): string {
-  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`;
-}
-function iconHammer(): string {
-  return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l4 4"/><path d="M3 21l9-9"/><path d="M11.5 4.5l8 8 2-2-8-8z"/></svg>`;
-}
-function iconSparkle(): string {
-  return `<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 14l.8 1.9 1.9.8-1.9.8L19 19.4l-.8-1.9-1.9-.8 1.9-.8z"/></svg>`;
-}
 function iconWarn(): string {
   return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
 }
@@ -483,167 +529,127 @@ function injectStyles(): void {
   const style = document.createElement("style");
   style.dataset.screen = "cleanup";
   style.textContent = `
-.cl { display: flex; flex-direction: column; gap: 22px; padding-bottom: 96px; animation: cl-fade 220ms ease both; }
-@keyframes cl-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.cl { padding: var(--s-5) var(--s-4); max-width: 880px; margin: 0 auto; width: 100%; }
 
-.cl-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.cl-title { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
-.cl-sub { margin: 6px 0 0; color: var(--text-dim); font-size: 14px; }
-
-.cl-body { display: flex; flex-direction: column; gap: 14px; }
-
-/* cards */
-.cl-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-  transition: border-color 180ms ease, box-shadow 180ms ease;
+/* --- idle / hero --- */
+.cl-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  transition: opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease);
 }
-.cl-card:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+.cl-hero.is-out { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+.cl-eyebrow {
+  font-size: 13px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.14em; color: var(--text-faint); margin-bottom: var(--s-3);
+}
+.cl-art { width: 240px; height: 240px; }
+.cl-title {
+  font-size: clamp(30px, 3.4vw, 40px); font-weight: 700;
+  letter-spacing: -0.02em; line-height: 1.1; color: var(--text);
+  margin-top: var(--s-4);
+}
+.cl-sub {
+  font-size: 17px; font-weight: 400; color: var(--text-dim);
+  max-width: 460px; margin: var(--s-2) auto 0;
+}
+.cl-cta-wrap {
+  margin-top: var(--s-6); min-height: 128px;
+  display: grid; place-items: center;
+}
+.cl-scan-spin { width: 28px; height: 28px; }
+.cl-hint { font-size: 13px; color: var(--text-faint); margin-top: var(--s-3); }
+
+/* --- results --- */
+.cl-results { opacity: 0; }
+.cl-results.is-in { animation: fade-up var(--t-slow) var(--ease) both; opacity: 1; }
+.cl-head-info h2 { margin: 0; }
+.cl-total { color: var(--accent-2); font-weight: 700; font-variant-numeric: tabular-nums; }
+.cl-head [data-count] { font-variant-numeric: tabular-nums; }
+
+.cl-clean.is-busy { pointer-events: none; opacity: 0.8; }
+
+.cl-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); align-items: start; }
+.cl-card { animation: fade-up var(--t-slow) var(--ease) both; }
 
 .cl-card-head {
   display: grid;
-  grid-template-columns: 40px 1fr auto auto 22px;
+  grid-template-columns: 44px 1fr auto;
   align-items: center;
   gap: 14px;
-  width: 100%;
-  background: transparent;
-  border: none;
-  padding: 16px 18px;
-  text-align: left;
-  color: var(--text);
+  padding: 18px 18px 12px;
 }
 .cl-card-icon {
-  width: 40px; height: 40px;
+  width: 44px; height: 44px;
   display: grid; place-items: center;
-  border-radius: 12px;
-  color: var(--accent-2);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-radius: 13px;
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-2) 40%, transparent);
 }
 .cl-card-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.cl-card-title { font-size: 15px; font-weight: 600; }
+.cl-card-title { font-size: 15px; font-weight: 600; color: var(--text); }
 .cl-card-blurb { font-size: 12.5px; color: var(--text-dim); }
-.cl-card-size { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.cl-card-count { font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.cl-chevron { display: grid; place-items: center; color: var(--text-faint); transition: transform 200ms ease; }
-.cl-card[data-open="false"] .cl-chevron { transform: rotate(-90deg); }
+.cl-card-size {
+  font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.cl-card-bar { margin: 0 18px 14px; width: auto; }
 
 .cl-list {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition: grid-template-rows 240ms ease;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hairline);
+  border-radius: 0;
+  max-height: 320px;
+  overflow-y: auto;
 }
-.cl-card[data-open="false"] .cl-list { grid-template-rows: 0fr; border-top-color: transparent; }
-.cl-list > * { min-height: 0; }
-.cl-card[data-open="false"] .cl-list { overflow: hidden; }
-
-.cl-item {
-  display: grid;
-  grid-template-columns: 22px 1fr auto;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  cursor: pointer;
-  transition: background 140ms ease;
-}
-.cl-item:last-child { border-bottom: none; }
-.cl-item:hover { background: var(--surface-2); }
-.cl-item.is-checked { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.cl-item-all { background: var(--surface-2); font-weight: 600; }
-.cl-item-all:hover { background: color-mix(in srgb, var(--surface-2) 80%, var(--accent)); }
-
-.cl-check {
-  appearance: none;
-  width: 18px; height: 18px;
-  border-radius: 6px;
-  border: 1.5px solid var(--text-faint);
-  background: transparent;
-  display: grid; place-items: center;
-  cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease;
-}
-.cl-check:hover { border-color: var(--accent); }
-.cl-check:checked, .cl-check:indeterminate {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  border-color: transparent;
-}
-.cl-check:checked::after {
-  content: ""; width: 5px; height: 9px;
-  border: solid #fff; border-width: 0 2px 2px 0;
-  transform: rotate(45deg) translateY(-1px);
-}
-.cl-check:indeterminate::after { content: ""; width: 9px; height: 2px; background: #fff; border-radius: 1px; }
-.cl-check:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-
-.cl-item-label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.cl-item-name { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); }
-.cl-item-all .cl-item-name { font-family: var(--font); }
+.cl-item { padding: 10px 18px; }
+.cl-item-all { font-weight: 600; background: rgba(255, 255, 255, 0.03); }
 .cl-item-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cl-badge.cl-badge { padding: 2px 7px; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
 .cl-item-note { font-size: 11.5px; color: var(--text-faint); }
-.cl-item-size { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.cl-item-size { font-size: 13px; color: var(--text-dim); font-weight: 600; }
 
-.cl-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 999px; }
-.cl-badge-risky { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
-.cl-badge-stale { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+/* --- states --- */
+.cl-state { gap: 14px; }
+.cl-state-glyph { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 20px; }
+.cl-state-glyph-ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.cl-state-glyph-warn { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.cl-state p { max-width: 380px; }
 
-/* footer */
-.cl-footer {
-  position: sticky;
-  bottom: 0;
-  margin-top: 6px;
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  padding: 14px 18px;
-  background: color-mix(in srgb, var(--bg-elev) 88%, transparent);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-}
-.cl-footer-summary { display: flex; flex-direction: column; gap: 2px; }
-.cl-footer-size { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.cl-footer-count { font-size: 12.5px; color: var(--text-dim); }
-.cl-footer-actions { display: flex; gap: 10px; }
-.cl-clean-btn.is-disabled { opacity: 0.45; pointer-events: none; }
-.cl-clean-btn.is-busy { opacity: 0.8; pointer-events: none; }
-
-/* states */
-.cl-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 72px 20px; text-align: center; }
-.cl-state-text { margin: 0; color: var(--text-dim); font-size: 14px; max-width: 380px; }
-.cl-state-title { margin: 0; font-size: 18px; }
-.cl-state-glyph { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 20px; color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
-.cl-state-glyph-warn { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
-
-/* modal */
+/* --- modal --- */
 .cl-modal-overlay {
   position: fixed; inset: 0; z-index: 80;
   display: grid; place-items: center;
-  background: rgba(0,0,0,0.5);
-  opacity: 0; transition: opacity 160ms ease;
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  opacity: 0; transition: opacity 160ms var(--ease);
 }
 .cl-modal-overlay.is-open { opacity: 1; }
 .cl-modal-overlay.is-leaving { opacity: 0; }
 .cl-modal {
   width: min(420px, calc(100vw - 48px));
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  padding: 22px;
+  padding: 24px;
   transform: scale(0.96) translateY(8px);
-  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform 180ms var(--ease);
 }
 .cl-modal-overlay.is-open .cl-modal { transform: none; }
-.cl-modal-title { margin: 0 0 8px; font-size: 17px; }
-.cl-modal-text { margin: 0; color: var(--text-dim); font-size: 13.5px; line-height: 1.5; }
+.cl-modal-title { margin: 0 0 8px; font-size: 18px; }
+.cl-modal-text { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.5; }
 .cl-modal-text strong { color: var(--text); }
-.cl-modal-warn { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 10px 12px; border-radius: var(--radius); font-size: 12.5px; color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.cl-modal-warn {
+  display: flex; gap: 10px; align-items: flex-start; margin-top: 16px;
+  padding: 11px 13px; border-radius: 14px; font-size: 12.5px;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
 .cl-modal-warn svg { flex: 0 0 auto; margin-top: 1px; }
-.cl-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.cl-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cl-card, .cl-results.is-in { animation: none; }
+  .cl-hero { transition: none; }
+}
 `;
   document.head.appendChild(style);
 }

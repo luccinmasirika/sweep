@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <!-- world halo behind everything -->
+    <radialGradient id="slHalo" cx="50%" cy="46%" r="52%">
+      <stop offset="0" stop-color="#b985ff" stop-opacity="0.55"/>
+      <stop offset="55%" stop-color="#8a45e6" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#8a45e6" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- treemap / sunburst disc base -->
+    <radialGradient id="slDiscBase" cx="42%" cy="34%" r="78%">
+      <stop offset="0" stop-color="#3a1a72"/>
+      <stop offset="58%" stop-color="#2a0f5a"/>
+      <stop offset="100%" stop-color="#170836"/>
+    </radialGradient>
+    <radialGradient id="slDiscRim" cx="50%" cy="50%" r="50%">
+      <stop offset="82%" stop-color="#b985ff" stop-opacity="0"/>
+      <stop offset="96%" stop-color="#cfa8ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#cfa8ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- sunburst wedge gradients -->
+    <linearGradient id="slWedgeA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c79bff"/>
+      <stop offset="100%" stop-color="#8a52e6"/>
+    </linearGradient>
+    <linearGradient id="slWedgeB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9b5cf0"/>
+      <stop offset="100%" stop-color="#5b2bb0"/>
+    </linearGradient>
+    <linearGradient id="slWedgeC" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e0c3ff"/>
+      <stop offset="100%" stop-color="#a877f0"/>
+    </linearGradient>
+
+    <!-- glass lens body -->
+    <radialGradient id="slLensFill" cx="40%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.42"/>
+      <stop offset="34%" stop-color="#c7a3ff" stop-opacity="0.22"/>
+      <stop offset="74%" stop-color="#6c34c4" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#3a1a72" stop-opacity="0.5"/>
+    </radialGradient>
+    <linearGradient id="slRing" x1="0.18" y1="0.1" x2="0.82" y2="0.92">
+      <stop offset="0" stop-color="#f3e6ff"/>
+      <stop offset="28%" stop-color="#c79bff"/>
+      <stop offset="62%" stop-color="#8a45e6"/>
+      <stop offset="100%" stop-color="#4b1e96"/>
+    </linearGradient>
+    <linearGradient id="slRingInner" x1="0.2" y1="0.15" x2="0.8" y2="0.9">
+      <stop offset="0" stop-color="#5b2bb0"/>
+      <stop offset="100%" stop-color="#1f0c44"/>
+    </linearGradient>
+    <linearGradient id="slHandle" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9b8ff"/>
+      <stop offset="42%" stop-color="#9b5cf0"/>
+      <stop offset="100%" stop-color="#4b1e96"/>
+    </linearGradient>
+    <linearGradient id="slHandleHi" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="slSoftShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <filter id="slBlurSm" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+    <radialGradient id="slLensGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#cfa8ff" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#cfa8ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <clipPath id="slDiscClip"><circle cx="98" cy="104" r="62"/></clipPath>
+  </defs>
+
+  <!-- ambient world halo -->
+  <circle cx="120" cy="116" r="104" fill="url(#slHalo)"/>
+
+  <!-- contact shadow on the floor -->
+  <ellipse cx="124" cy="206" rx="74" ry="16" fill="#120630" opacity="0.55" filter="url(#slSoftShadow)"/>
+
+  <!-- ===== sunburst / treemap disc being inspected ===== -->
+  <g>
+    <circle cx="98" cy="104" r="64" fill="#170836" filter="url(#slBlurSm)" opacity="0.5"/>
+    <circle cx="98" cy="104" r="62" fill="url(#slDiscBase)"/>
+    <g clip-path="url(#slDiscClip)" opacity="0.95">
+      <!-- outer ring wedges (treemap-style sunburst) -->
+      <path d="M98 104 L98 42 A62 62 0 0 1 152 73 Z" fill="url(#slWedgeC)"/>
+      <path d="M98 104 L152 73 A62 62 0 0 1 158 122 Z" fill="url(#slWedgeB)"/>
+      <path d="M98 104 L158 122 A62 62 0 0 1 116 162 Z" fill="url(#slWedgeA)"/>
+      <path d="M98 104 L116 162 A62 62 0 0 1 52 150 Z" fill="url(#slWedgeC)" opacity="0.92"/>
+      <path d="M98 104 L52 150 A62 62 0 0 1 38 94 Z" fill="url(#slWedgeB)"/>
+      <path d="M98 104 L38 94 A62 62 0 0 1 98 42 Z" fill="url(#slWedgeA)" opacity="0.9"/>
+      <!-- inner ring -->
+      <path d="M98 104 L98 66 A38 38 0 0 1 134 96 Z" fill="#e0c3ff" opacity="0.85"/>
+      <path d="M98 104 L134 96 A38 38 0 0 1 80 139 Z" fill="#a877f0" opacity="0.8"/>
+      <path d="M98 104 L80 139 A38 38 0 0 1 98 66 Z" fill="#7a45d6" opacity="0.85"/>
+      <!-- core -->
+      <circle cx="98" cy="104" r="15" fill="#f3e6ff" opacity="0.92"/>
+      <circle cx="98" cy="104" r="15" fill="url(#slLensFill)"/>
+    </g>
+    <!-- disc glassy sheen + rim -->
+    <ellipse cx="80" cy="80" rx="40" ry="26" fill="#ffffff" opacity="0.14"/>
+    <circle cx="98" cy="104" r="62" fill="url(#slDiscRim)"/>
+    <circle cx="98" cy="104" r="62" fill="none" stroke="#cfa8ff" stroke-opacity="0.35" stroke-width="1.2"/>
+  </g>
+
+  <!-- ===== glossy magnifier hovering top-right ===== -->
+  <g>
+    <!-- handle -->
+    <g transform="rotate(45 160 150)">
+      <rect x="151" y="146" width="58" height="20" rx="10" fill="url(#slHandle)"/>
+      <rect x="156" y="149" width="40" height="4.5" rx="2.25" fill="url(#slHandleHi)"/>
+      <rect x="200" y="145" width="14" height="22" rx="7" fill="#3a1a72"/>
+    </g>
+
+    <!-- lens glow under glass -->
+    <circle cx="146" cy="92" r="48" fill="url(#slLensGlow)"/>
+
+    <!-- outer chrome ring -->
+    <circle cx="146" cy="92" r="42" fill="url(#slRingInner)"/>
+    <circle cx="146" cy="92" r="42" fill="none" stroke="url(#slRing)" stroke-width="11"/>
+    <!-- ring top specular -->
+    <path d="M120 62 A42 42 0 0 1 176 70" fill="none" stroke="#ffffff" stroke-opacity="0.7" stroke-width="3.2" stroke-linecap="round"/>
+    <!-- ring bottom rim light -->
+    <path d="M118 122 A42 42 0 0 0 174 116" fill="none" stroke="#5b2bb0" stroke-opacity="0.7" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- glass disc -->
+    <circle cx="146" cy="92" r="33" fill="url(#slLensFill)"/>
+    <circle cx="146" cy="92" r="33" fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1"/>
+
+    <!-- specular highlights -->
+    <ellipse cx="132" cy="74" rx="16" ry="10" fill="#ffffff" opacity="0.75" transform="rotate(-30 132 74)"/>
+    <circle cx="160" cy="104" r="4.5" fill="#ffffff" opacity="0.5"/>
+    <ellipse cx="146" cy="92" rx="33" ry="33" fill="none"/>
+  </g>
+
+  <!-- tiny floating sparkles for premium feel -->
+  <circle cx="196" cy="58" r="2.6" fill="#e0c3ff" opacity="0.85"/>
+  <circle cx="58" cy="46" r="2" fill="#cfa8ff" opacity="0.7"/>
+  <circle cx="44" cy="150" r="1.8" fill="#b985ff" opacity="0.6"/>
+</svg>

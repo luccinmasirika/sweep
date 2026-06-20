@@ -1,14 +1,16 @@
-// Maintenance screen. A checklist of macOS housekeeping tasks (flush DNS,
-// rebuild Spotlight, reset Launch Services, run the periodic scripts) that free
-// no space but keep the system healthy. The selected task labels are passed
-// straight to maintenance(tasks) — the backend matches them by their exact
-// human label. Several steps need root, so we warn up front and surface the
-// failure count afterwards. If the result carries login-item info we show it;
-// otherwise we point at System Settings, which is where removal belongs.
+// Maintenance screen — the Performance world (orange/amber). A curated set of
+// macOS housekeeping routines (flush DNS, rebuild Spotlight, reset Launch
+// Services, run the periodic scripts) that free no space but keep the system
+// healthy. Each routine is a glass card you can toggle on/off; the selected
+// card labels are passed straight to maintenance(tasks) — the backend matches
+// them by their exact human label. Several steps need root, so we warn up front
+// and surface the failure count afterwards. If the result carries login-item
+// info we show it; otherwise we point at System Settings, where removal belongs.
 
 import type { Api } from "../api";
 import type { ActionResult } from "../types";
-import { button, toast, type ButtonHandle } from "../components";
+import { button, toast } from "../components";
+import heroRaw from "../assets/illustrations/maintenance.svg?raw";
 
 // Task keys are the exact labels the sweep crate matches against. Keep them in
 // sync with src/maintenance.rs::TASKS.
@@ -51,11 +53,10 @@ const TASKS: TaskDef[] = [
   },
 ];
 
-interface Row {
+interface Card {
   def: TaskDef;
-  checked: boolean;
-  input: HTMLInputElement;
-  row: HTMLElement;
+  selected: boolean;
+  el: HTMLElement;
 }
 
 // The GUI maintenance() returns only a failure count, but a future backend may
@@ -71,105 +72,102 @@ export function renderMaintenance(root: HTMLElement, api: Api): void {
   const el = document.createElement("div");
   el.className = "screen screen-maintenance mt";
   el.innerHTML = `
-    <header class="mt-head">
-      <div>
-        <h2 class="mt-title">Maintenance</h2>
-        <p class="mt-sub">Routine macOS housekeeping. These tasks free no space — they keep search, networking and the apps database healthy.</p>
+    <section class="hero mt-hero">
+      <span class="eyebrow">Performance</span>
+      <div class="hero-art" aria-hidden="true">${heroRaw}</div>
+      <h1 class="title">Tune up your Mac.</h1>
+      <p class="subtitle">Routine housekeeping that keeps search, networking and the apps database fast. These tasks free no space — they keep things humming.</p>
+      <div class="mt-cta-pedestal">
+        <button type="button" class="cta-circle mt-cta" aria-label="Run selected maintenance tasks">Run</button>
       </div>
-    </header>
-
-    <div class="mt-note" role="note">
-      <span class="mt-note-icon">${iconShield()}</span>
-      <div class="mt-note-body">
-        <span class="mt-note-title">Some tasks need administrator rights</span>
-        <span class="mt-note-text">Steps that touch the whole system may prompt for your password or fail with a “try with sudo” hint. Nothing here deletes your files.</span>
-      </div>
-    </div>
-
-    <section class="mt-card">
-      <div class="mt-card-head">
-        <label class="mt-all">
-          <input type="checkbox" class="mt-check" data-all aria-label="Select all tasks" />
-          <span class="mt-all-text">Select tasks</span>
-        </label>
-        <span class="mt-all-count" data-count></span>
-      </div>
-      <div class="mt-list" data-list></div>
+      <p class="mt-hint" data-hint></p>
     </section>
 
-    <div class="mt-login" data-login hidden></div>
+    <section class="mt-recos" aria-label="Maintenance routines">
+      <div class="mt-recos-head">
+        <span class="mt-recos-eyebrow">Recommended routines</span>
+        <button type="button" class="mt-toggle-all" data-toggle-all></button>
+      </div>
+      <div class="grid mt-grid" data-grid></div>
 
-    <div class="mt-footer">
-      <p class="mt-footer-hint">Selected tasks run in sequence and report any failures.</p>
-      <div class="mt-footer-actions" data-actions></div>
-    </div>
+      <div class="mt-note glass" role="note">
+        <span class="mt-note-icon">${iconShield()}</span>
+        <div class="mt-note-body">
+          <span class="mt-note-title">Some routines need administrator rights</span>
+          <span class="mt-note-text">System-wide steps may prompt for your password or fail with a “try with sudo” hint. Nothing here deletes your files.</span>
+        </div>
+      </div>
+
+      <div class="mt-login glass" data-login hidden></div>
+    </section>
   `;
   root.appendChild(el);
 
-  const list = el.querySelector<HTMLElement>("[data-list]")!;
-  const allBox = el.querySelector<HTMLInputElement>("[data-all]")!;
-  const countEl = el.querySelector<HTMLElement>("[data-count]")!;
-  const actions = el.querySelector<HTMLElement>("[data-actions]")!;
+  const grid = el.querySelector<HTMLElement>("[data-grid]")!;
+  const cta = el.querySelector<HTMLButtonElement>(".mt-cta")!;
+  const hint = el.querySelector<HTMLElement>("[data-hint]")!;
+  const toggleAll = el.querySelector<HTMLButtonElement>("[data-toggle-all]")!;
   const loginPanel = el.querySelector<HTMLElement>("[data-login]")!;
 
-  const rows: Row[] = TASKS.map((def) => buildRow(def, onRowChange));
-  for (const r of rows) list.appendChild(r.row);
+  const cards: Card[] = TASKS.map((def) => buildCard(def, onCardChange));
+  for (const c of cards) grid.appendChild(c.el);
 
-  const runBtn = button({
-    label: "Run maintenance",
-    variant: "primary",
-    icon: "broom",
-    onClick: () => void run(),
-  }) as ButtonHandle;
-  runBtn.classList.add("mt-run");
-  actions.appendChild(runBtn);
-
-  allBox.addEventListener("change", () => {
-    for (const r of rows) setRow(r, allBox.checked);
+  cta.addEventListener("click", () => void run());
+  toggleAll.addEventListener("click", () => {
+    const allOn = cards.every((c) => c.selected);
+    for (const c of cards) setCard(c, !allOn);
     sync();
   });
 
+  let busy = false;
   sync();
 
-  function onRowChange(): void {
+  function onCardChange(): void {
     sync();
   }
 
-  function selected(): Row[] {
-    return rows.filter((r) => r.checked);
+  function selected(): Card[] {
+    return cards.filter((c) => c.selected);
   }
 
   function sync(): void {
     const picked = selected();
-    countEl.textContent = picked.length
-      ? `${picked.length} of ${rows.length} selected`
-      : "None selected";
+    const all = picked.length === cards.length;
 
-    allBox.checked = picked.length === rows.length;
-    allBox.indeterminate = picked.length > 0 && picked.length < rows.length;
+    toggleAll.textContent = all ? "Clear all" : "Select all";
 
-    runBtn.disabled = picked.length === 0;
-    runBtn.classList.toggle("is-disabled", picked.length === 0);
+    cta.textContent = busy ? "Running…" : "Run";
+    const disabled = busy || picked.length === 0;
+    cta.disabled = disabled;
+    cta.setAttribute("aria-disabled", String(disabled));
+
+    if (busy) {
+      hint.textContent = "Running routines in sequence…";
+    } else if (picked.length === 0) {
+      hint.textContent = "Select at least one routine to run.";
+    } else {
+      const needsSudo = picked.some((c) => c.def.sudo);
+      hint.textContent = needsSudo
+        ? `${picked.length} routine${picked.length === 1 ? "" : "s"} selected · some need administrator rights`
+        : `${picked.length} routine${picked.length === 1 ? "" : "s"} selected`;
+    }
   }
 
   async function run(): Promise<void> {
     const picked = selected();
-    if (picked.length === 0) return;
+    if (picked.length === 0 || busy) return;
 
-    const needsSudo = picked.some((r) => r.def.sudo);
-    const ok = await confirmRun(
-      picked.map((r) => r.def.title),
-      needsSudo
-    );
+    const needsSudo = picked.some((c) => c.def.sudo);
+    const ok = await confirmRun(picked.map((c) => c.def.title), needsSudo);
     if (!ok) return;
 
-    runBtn.setBusy(true);
-    runBtn.setLabel("Running…");
-    list.classList.add("is-busy");
+    busy = true;
+    grid.classList.add("is-busy");
+    sync();
 
     let result: ActionResult;
     try {
-      result = await api.maintenance(picked.map((r) => r.def.key));
+      result = await api.maintenance(picked.map((c) => c.def.key));
     } catch (err) {
       toast(`Maintenance failed: ${message(err)}`, { kind: "error" });
       restore();
@@ -183,7 +181,7 @@ export function renderMaintenance(root: HTMLElement, api: Api): void {
       );
     } else {
       toast(
-        `Maintenance complete — ${picked.length} task${picked.length === 1 ? "" : "s"} run.`,
+        `Maintenance complete — ${picked.length} routine${picked.length === 1 ? "" : "s"} run.`,
         { kind: "success" }
       );
     }
@@ -193,9 +191,8 @@ export function renderMaintenance(root: HTMLElement, api: Api): void {
   }
 
   function restore(): void {
-    runBtn.setBusy(false);
-    runBtn.setLabel("Run maintenance");
-    list.classList.remove("is-busy");
+    busy = false;
+    grid.classList.remove("is-busy");
     sync();
   }
 
@@ -221,7 +218,7 @@ export function renderMaintenance(root: HTMLElement, api: Api): void {
     tags.className = "mt-login-tags";
     for (const name of items) {
       const tag = document.createElement("span");
-      tag.className = "mt-login-tag";
+      tag.className = "chip mt-login-tag";
       tag.textContent = name;
       tags.appendChild(tag);
     }
@@ -229,49 +226,38 @@ export function renderMaintenance(root: HTMLElement, api: Api): void {
   }
 }
 
-function buildRow(def: TaskDef, onChange: () => void): Row {
-  const row = document.createElement("label");
-  row.className = "mt-item";
-  row.classList.add("is-checked");
-
-  const input = document.createElement("input");
-  input.type = "checkbox";
-  input.className = "mt-check";
-  input.checked = true;
-  input.setAttribute("aria-label", def.title);
-
-  const glyph = document.createElement("span");
-  glyph.className = "mt-item-icon";
-  glyph.innerHTML = def.icon;
-
-  const label = document.createElement("span");
-  label.className = "mt-item-label";
-  label.innerHTML = `
-    <span class="mt-item-title">
-      ${escapeHtml(def.title)}
-      ${def.sudo ? `<span class="mt-badge" title="Needs administrator rights">${iconLock()}sudo</span>` : ""}
+function buildCard(def: TaskDef, onChange: () => void): Card {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = "glass-card is-hoverable is-selected mt-card";
+  node.setAttribute("role", "switch");
+  node.setAttribute("aria-checked", "true");
+  node.setAttribute("aria-label", def.title);
+  node.innerHTML = `
+    <span class="mt-card-icon">${def.icon}</span>
+    <span class="mt-card-body">
+      <span class="mt-card-title">
+        ${escapeHtml(def.title)}
+        ${def.sudo ? `<span class="mt-badge" title="Needs administrator rights">${iconLock()}sudo</span>` : ""}
+      </span>
+      <span class="mt-card-blurb">${escapeHtml(def.blurb)}</span>
     </span>
-    <span class="mt-item-blurb">${escapeHtml(def.blurb)}</span>
+    <span class="mt-card-mark" aria-hidden="true">${iconCheck()}</span>
   `;
 
-  row.appendChild(input);
-  row.appendChild(glyph);
-  row.appendChild(label);
-
-  const r: Row = { def, checked: true, input, row };
-  input.addEventListener("change", () => {
-    r.checked = input.checked;
-    row.classList.toggle("is-checked", input.checked);
+  const c: Card = { def, selected: true, el: node };
+  node.addEventListener("click", () => {
+    setCard(c, !c.selected);
     onChange();
   });
-  return r;
+  return c;
 }
 
-function setRow(r: Row, checked: boolean): void {
-  if (r.checked === checked) return;
-  r.checked = checked;
-  r.input.checked = checked;
-  r.row.classList.toggle("is-checked", checked);
+function setCard(c: Card, selected: boolean): void {
+  if (c.selected === selected) return;
+  c.selected = selected;
+  c.el.classList.toggle("is-selected", selected);
+  c.el.setAttribute("aria-checked", String(selected));
 }
 
 // --- confirm dialog ---
@@ -284,16 +270,16 @@ function confirmRun(titles: string[], needsSudo: boolean): Promise<boolean> {
     overlay.setAttribute("aria-modal", "true");
 
     const dialog = document.createElement("div");
-    dialog.className = "mt-modal";
+    dialog.className = "mt-modal glass-strong";
     dialog.innerHTML = `
-      <h3 class="mt-modal-title">Run ${titles.length} task${titles.length === 1 ? "" : "s"}?</h3>
+      <h3 class="mt-modal-title">Run ${titles.length} routine${titles.length === 1 ? "" : "s"}?</h3>
       <p class="mt-modal-text">These steps modify system state but never delete your files:</p>
       <ul class="mt-modal-list">
         ${titles.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}
       </ul>
       ${
         needsSudo
-          ? `<div class="mt-modal-warn">${iconShield()}<span>One or more tasks need administrator rights. macOS may prompt for your password, and a step can fail if it isn't granted.</span></div>`
+          ? `<div class="mt-modal-warn">${iconShield()}<span>One or more routines need administrator rights. macOS may prompt for your password, and a step can fail if it isn't granted.</span></div>`
           : ""
       }
     `;
@@ -314,7 +300,7 @@ function confirmRun(titles: string[], needsSudo: boolean): Promise<boolean> {
       onClick: () => finish(false),
     });
     const confirm = button({
-      label: "Run tasks",
+      label: "Run routines",
       variant: "primary",
       onClick: () => finish(true),
     });
@@ -362,16 +348,16 @@ function escapeHtml(s: string): string {
 // --- inline icons ---
 
 function iconGlobe(): string {
-  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"/></svg>`;
+  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18"/></svg>`;
 }
 function iconSearch(): string {
-  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>`;
+  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>`;
 }
 function iconLayers(): string {
-  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>`;
+  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 8l9 5 9-5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>`;
 }
 function iconCalendar(): string {
-  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>`;
+  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>`;
 }
 function iconShield(): string {
   return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z"/><path d="M9.5 12l1.7 1.7L15 10"/></svg>`;
@@ -381,6 +367,9 @@ function iconLock(): string {
 }
 function iconPower(): string {
   return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>`;
+}
+function iconCheck(): string {
+  return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 12.5 10 17.5 19 7"/></svg>`;
 }
 
 // --- scoped styles ---
@@ -392,159 +381,216 @@ function injectStyles(): void {
   const style = document.createElement("style");
   style.dataset.screen = "maintenance";
   style.textContent = `
-.mt { display: flex; flex-direction: column; gap: 20px; padding-bottom: 40px; animation: mt-fade 220ms ease both; }
-@keyframes mt-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.mt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--s-5) var(--s-4) var(--s-7);
+  animation: fade-up var(--t-slow) var(--ease) both;
+}
 
-.mt-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.mt-title { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
-.mt-sub { margin: 6px 0 0; color: var(--text-dim); font-size: 14px; max-width: 620px; line-height: 1.5; }
+/* hero */
+.mt-hero { padding-top: var(--s-4); padding-bottom: var(--s-4); }
+.mt-hero .hero-art { width: 240px; height: 240px; }
+
+.mt-cta-pedestal {
+  margin-top: var(--s-6);
+  margin-bottom: calc(-1 * var(--s-2));
+  display: grid;
+  place-items: center;
+}
+.mt-cta { --size: 132px; }
+
+.mt-hint {
+  margin: var(--s-4) 0 0;
+  min-height: 1.2em;
+  font-size: 13px;
+  color: var(--text-faint);
+  text-align: center;
+  transition: opacity var(--t-base) var(--ease);
+}
+
+/* curated routines */
+.mt-recos {
+  width: 100%;
+  margin-top: var(--s-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  animation: fade-up var(--t-slow) var(--ease) both;
+}
+.mt-recos-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: 0 var(--s-1);
+}
+.mt-recos-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.mt-toggle-all {
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-2);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: color var(--t-fast) var(--ease), opacity var(--t-fast) var(--ease);
+}
+.mt-toggle-all:hover { opacity: 0.82; }
+.mt-toggle-all:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
+
+.mt-grid { transition: opacity var(--t-base) var(--ease); }
+.mt-grid.is-busy { opacity: 0.55; pointer-events: none; }
+
+/* routine card */
+.mt-card {
+  display: grid;
+  grid-template-columns: 52px 1fr 24px;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  text-align: left;
+  padding: 18px 20px;
+  color: var(--text);
+  font: inherit;
+}
+.mt-card-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  color: var(--accent-2);
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgba(255, 255, 255, 0.18), transparent 60%),
+    color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.mt-card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.mt-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.mt-card-blurb { font-size: 13px; color: var(--text-dim); line-height: 1.45; }
+
+.mt-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+
+/* selection mark */
+.mt-card-mark {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  color: transparent;
+  border: 1.5px solid var(--text-faint);
+  background: transparent;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.mt-card.is-selected .mt-card-mark {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+}
+.mt-card:not(.is-selected) {
+  border-color: var(--hairline);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.08) inset,
+    0 14px 38px rgba(0, 0, 0, 0.3);
+}
+.mt-card:not(.is-selected) .mt-card-icon { color: var(--text-faint); background: rgba(255, 255, 255, 0.06); box-shadow: none; }
+.mt-card:not(.is-selected) .mt-card-blurb { color: var(--text-faint); }
 
 /* sudo note */
 .mt-note {
-  display: flex; gap: 12px; align-items: flex-start;
-  padding: 13px 15px;
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--border));
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+  padding: 14px 18px;
+  margin-top: var(--s-2);
 }
 .mt-note-icon { flex: none; color: var(--warn); display: grid; place-items: center; margin-top: 1px; }
-.mt-note-body { display: flex; flex-direction: column; gap: 2px; }
+.mt-note-body { display: flex; flex-direction: column; gap: 3px; }
 .mt-note-title { font-size: 13.5px; font-weight: 600; }
 .mt-note-text { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
 
-/* card */
-.mt-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-.mt-card-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 13px 18px;
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--border);
-}
-.mt-all { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-.mt-all-text { font-size: 13px; font-weight: 600; }
-.mt-all-count { font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-
-.mt-list { display: flex; flex-direction: column; transition: opacity 160ms ease; }
-.mt-list.is-busy { opacity: 0.6; pointer-events: none; }
-
-.mt-item {
-  display: grid;
-  grid-template-columns: 22px 40px 1fr;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  cursor: pointer;
-  transition: background 140ms ease;
-}
-.mt-item:last-child { border-bottom: none; }
-.mt-item:hover { background: var(--surface-2); }
-.mt-item.is-checked { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-
-.mt-item-icon {
-  width: 40px; height: 40px;
-  display: grid; place-items: center;
-  border-radius: 12px;
-  color: var(--accent-2);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
-.mt-item-label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.mt-item-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
-.mt-item-blurb { font-size: 12.5px; color: var(--text-dim); line-height: 1.4; }
-
-.mt-badge {
-  display: inline-flex; align-items: center; gap: 3px;
-  font-size: 10px; font-weight: 700; text-transform: lowercase; letter-spacing: 0.02em;
-  padding: 2px 7px; border-radius: 999px;
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 16%, transparent);
-}
-
-/* checkbox (matches the app's accent-fill style) */
-.mt-check {
-  appearance: none;
-  width: 18px; height: 18px;
-  border-radius: 6px;
-  border: 1.5px solid var(--text-faint);
-  background: transparent;
-  display: grid; place-items: center;
-  cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease;
-}
-.mt-check:hover { border-color: var(--accent); }
-.mt-check:checked, .mt-check:indeterminate {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  border-color: transparent;
-}
-.mt-check:checked::after {
-  content: ""; width: 5px; height: 9px;
-  border: solid #fff; border-width: 0 2px 2px 0;
-  transform: rotate(45deg) translateY(-1px);
-}
-.mt-check:indeterminate::after { content: ""; width: 9px; height: 2px; background: #fff; border-radius: 1px; }
-.mt-check:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-
 /* login items */
-.mt-login {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  padding: 16px 18px;
-  animation: mt-fade 220ms ease both;
-}
-.mt-login-head { display: flex; gap: 12px; align-items: flex-start; }
+.mt-login { padding: 18px; animation: fade-up var(--t-slow) var(--ease) both; }
+.mt-login-head { display: flex; gap: var(--s-3); align-items: flex-start; }
 .mt-login-icon { flex: none; color: var(--accent-2); display: grid; place-items: center; margin-top: 1px; }
 .mt-login-title { display: block; font-size: 14px; font-weight: 600; margin-bottom: 2px; }
 .mt-login-text { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
-.mt-login-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.mt-login-tag {
-  font-size: 12px; padding: 4px 10px; border-radius: 999px;
-  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-}
-
-/* footer */
-.mt-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.mt-footer-hint { margin: 0; font-size: 12.5px; color: var(--text-faint); }
-.mt-footer-actions { display: flex; gap: 10px; }
-.mt-run.is-disabled { opacity: 0.45; pointer-events: none; }
+.mt-login-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.mt-login-tag { color: var(--text); }
 
 /* modal */
 .mt-modal-overlay {
-  position: fixed; inset: 0; z-index: 80;
-  display: grid; place-items: center;
-  background: rgba(0,0,0,0.5);
-  opacity: 0; transition: opacity 160ms ease;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 160ms ease;
 }
 .mt-modal-overlay.is-open { opacity: 1; }
 .mt-modal-overlay.is-leaving { opacity: 0; }
 .mt-modal {
   width: min(440px, calc(100vw - 48px));
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  padding: 22px;
+  padding: 24px;
   transform: scale(0.96) translateY(8px);
-  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform 180ms var(--ease-soft);
 }
 .mt-modal-overlay.is-open .mt-modal { transform: none; }
-.mt-modal-title { margin: 0 0 8px; font-size: 17px; }
+.mt-modal-title { margin: 0 0 8px; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
 .mt-modal-text { margin: 0; color: var(--text-dim); font-size: 13.5px; line-height: 1.5; }
-.mt-modal-list { margin: 10px 0 0; padding-left: 18px; color: var(--text); font-size: 13px; line-height: 1.7; }
+.mt-modal-list { margin: 12px 0 0; padding-left: 18px; color: var(--text); font-size: 13px; line-height: 1.7; }
 .mt-modal-warn {
-  display: flex; gap: 10px; align-items: flex-start; margin-top: 16px;
-  padding: 10px 12px; border-radius: var(--radius); font-size: 12.5px;
-  color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 16px;
+  padding: 11px 13px;
+  border-radius: var(--radius-tile);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 .mt-modal-warn svg { flex: 0 0 auto; margin-top: 1px; }
-.mt-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.mt-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mt, .mt-recos, .mt-login { animation-duration: 0.01ms; }
+}
 `;
   document.head.appendChild(style);
 }

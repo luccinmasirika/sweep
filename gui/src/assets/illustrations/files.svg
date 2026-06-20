@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <!-- world halo behind the object -->
+    <radialGradient id="filesHalo" cx="50%" cy="46%" r="52%">
+      <stop offset="0" stop-color="#48e0dc" stop-opacity="0.62"/>
+      <stop offset="55%" stop-color="#1fc8c8" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#1fc8c8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- back (twin) folder body -->
+    <linearGradient id="filesBackBody" x1="0.12" y1="0.05" x2="0.88" y2="1">
+      <stop offset="0" stop-color="#3fd6d2"/>
+      <stop offset="46%" stop-color="#15a3a6"/>
+      <stop offset="100%" stop-color="#07484e"/>
+    </linearGradient>
+    <linearGradient id="filesBackTab" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#5fe6e2"/>
+      <stop offset="100%" stop-color="#129ea0"/>
+    </linearGradient>
+
+    <!-- front folder body: brighter, glossy -->
+    <radialGradient id="filesFrontBody" cx="34%" cy="22%" r="92%">
+      <stop offset="0" stop-color="#a8f6f3"/>
+      <stop offset="30%" stop-color="#46ddd9"/>
+      <stop offset="64%" stop-color="#16b5b5"/>
+      <stop offset="100%" stop-color="#085a60"/>
+    </radialGradient>
+    <linearGradient id="filesFrontTab" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#bafaf7"/>
+      <stop offset="100%" stop-color="#2bc6c4"/>
+    </linearGradient>
+    <!-- paper sheet peeking out -->
+    <linearGradient id="filesSheet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d6f6f4"/>
+    </linearGradient>
+    <linearGradient id="filesSheet2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eafdfb"/>
+      <stop offset="100%" stop-color="#bfeeec"/>
+    </linearGradient>
+
+    <!-- specular sheen across the front flap -->
+    <linearGradient id="filesSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.78"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="filesSpec" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <!-- rim light along bottom edge -->
+    <linearGradient id="filesRim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#cafffd" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#9ff5f2" stop-opacity="0.85"/>
+    </linearGradient>
+
+    <filter id="filesShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <filter id="filesSoft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.2"/>
+    </filter>
+    <filter id="filesDrop" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#021c1f" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- ambient world halo -->
+  <circle cx="120" cy="112" r="104" fill="url(#filesHalo)"/>
+
+  <!-- contact shadow on the ground -->
+  <ellipse cx="122" cy="198" rx="74" ry="16" fill="#021d20" opacity="0.55" filter="url(#filesShadow)"/>
+
+  <g filter="url(#filesDrop)">
+    <!-- ===== BACK folder (the twin), offset up-left ===== -->
+    <g transform="translate(-16 -14) rotate(-7 110 120)">
+      <path d="M52 70h30l11 13h40a15 15 0 0 1 15 15v8H37V85a15 15 0 0 1 15-15z" fill="url(#filesBackTab)"/>
+      <path d="M37 96h111a13 13 0 0 1 13 13v50a13 13 0 0 1-13 13H50a13 13 0 0 1-13-13z" fill="url(#filesBackBody)"/>
+      <!-- subtle top sheen on twin -->
+      <ellipse cx="92" cy="112" rx="44" ry="10" fill="#ffffff" opacity="0.16"/>
+    </g>
+
+    <!-- ===== peeking paper sheets between folders ===== -->
+    <g transform="translate(0 -6)">
+      <rect x="74" y="78" width="84" height="56" rx="7" fill="url(#filesSheet2)" transform="rotate(4 116 106)" opacity="0.92"/>
+      <rect x="70" y="74" width="84" height="56" rx="7" fill="url(#filesSheet)" transform="rotate(-2 112 102)"/>
+      <g opacity="0.34" transform="rotate(-2 112 102)">
+        <rect x="80" y="88" width="56" height="5" rx="2.5" fill="#0b6166"/>
+        <rect x="80" y="99" width="44" height="5" rx="2.5" fill="#0b6166"/>
+      </g>
+    </g>
+
+    <!-- ===== FRONT folder, brighter & glossy ===== -->
+    <g>
+      <!-- back panel of the front folder (the raised inner card) -->
+      <path d="M72 92h30l12 14h44a14 14 0 0 1 14 14v30H58v-44a14 14 0 0 1 14-14z" fill="url(#filesFrontTab)"/>
+
+      <!-- front flap (the glossy face that catches the light) -->
+      <path d="M62 120h100a16 16 0 0 1 15.7 12.9l7.6 35A12 12 0 0 1 173.5 182H56.5a12 12 0 0 1-11.8-14.1l7.6-35A16 16 0 0 1 62 120z" fill="url(#filesFrontBody)"/>
+      <!-- specular sheen on flap -->
+      <path d="M62 120h100a16 16 0 0 1 15.7 12.9l3.6 16.6c-32-7.5-104-7.5-142 0L43 132.9A16 16 0 0 1 62 120z" fill="url(#filesSheen)" opacity="0.9" filter="url(#filesSoft)"/>
+
+      <!-- rim light along the bottom front edge -->
+      <path d="M48 169q72 15 144 0l-1.4 6.4A12 12 0 0 1 178.5 182H56.5a12 12 0 0 1-11.9-10.4z" fill="url(#filesRim)" opacity="0.7"/>
+    </g>
+  </g>
+
+  <!-- crisp specular hotspots -->
+  <ellipse cx="90" cy="134" rx="32" ry="9" fill="url(#filesSpec)" opacity="0.65" filter="url(#filesSoft)"/>
+  <circle cx="74" cy="130" r="4.5" fill="#ffffff" opacity="0.92"/>
+</svg>

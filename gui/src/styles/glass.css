@@ -1,0 +1,414 @@
+/* Sweep liquid-glass system — the frosted material that defines the look.
+
+   Translucent panels that sample the world gradient behind them via
+   backdrop-filter. Every blur pairs the -webkit- prefix (WKWebView needs it).
+   No feDisplacementMap / url(#filter) inside backdrop-filter — it silently
+   fails in WKWebView; refraction is faked with blur + saturate + inset sheen.
+
+   Owned classes: .glass, .glass-strong, .glass-card, .sidebar, .cta-circle,
+   .cta-pill, .nav-item, .chip, .grid, .hero, .eyebrow, .title, .subtitle. */
+
+/* ============================================================
+   Glass tiers
+   ============================================================ */
+
+.glass {
+  position: relative;
+  background: rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  backdrop-filter: blur(28px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-card);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 18px 48px rgba(0, 0, 0, 0.42),
+    0 2px 8px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+/* inner top sheen — the highlight that sells the glass */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 38%);
+  pointer-events: none;
+}
+
+.glass-strong {
+  position: relative;
+  background:
+    radial-gradient(140% 120% at 0% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 55%),
+    rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: blur(36px) saturate(1.6);
+  backdrop-filter: blur(36px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-card);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.18) inset,
+    0 22px 60px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.glass-strong::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 38%);
+  pointer-events: none;
+}
+
+/* glass-card — the standard content/result tile */
+.glass-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  backdrop-filter: blur(28px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-tile);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.14) inset,
+    0 14px 38px rgba(0, 0, 0, 0.38),
+    0 2px 8px rgba(0, 0, 0, 0.26);
+  overflow: hidden;
+  transition:
+    transform var(--t-base) var(--ease),
+    border-color var(--t-base) var(--ease),
+    box-shadow var(--t-base) var(--ease);
+}
+
+.glass-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 40%);
+  pointer-events: none;
+}
+
+.glass-card.is-hoverable {
+  cursor: pointer;
+}
+
+.glass-card.is-hoverable:hover {
+  transform: translateY(-2px);
+  border-color: var(--glow);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.18) inset,
+    0 24px 60px rgba(0, 0, 0, 0.5),
+    0 0 0 1px var(--glow);
+}
+
+.glass-card.is-selected {
+  border-color: var(--accent-2);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.18) inset,
+    0 0 0 1px var(--accent-2),
+    0 14px 38px rgba(0, 0, 0, 0.38);
+}
+
+/* ============================================================
+   Sidebar — neutral glass, never world-tinted
+   ============================================================ */
+
+.sidebar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  /* A floating, rounded Liquid Glass panel (Apple Music style): only the menu
+     has a margin. Frosted glass layered OVER the window-wide coloured world —
+     backdrop-filter blurs the world gradient showing through, so the app
+     background continues under the menu (tinted), not the desktop. */
+  margin: 12px;
+  padding: 10px 10px 12px;
+  background: rgba(12, 12, 18, 0.32);
+  -webkit-backdrop-filter: blur(34px) saturate(1.4);
+  backdrop-filter: blur(34px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.08) inset;
+  overflow-y: auto;
+}
+
+/* ============================================================
+   Navigation items — active state recolours to the current world
+   ============================================================ */
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.nav-item:active {
+  transform: scale(0.985);
+}
+
+/* Apple Music style: a quiet light pill, text + icon tinted with the world
+   accent. No halo/glow. */
+.nav-item.is-active {
+  color: var(--accent-2);
+  background: rgba(255, 255, 255, 0.10);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* ============================================================
+   Chip / pill
+   ============================================================ */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  white-space: nowrap;
+}
+
+.chip svg {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+}
+
+.chip.is-accent {
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color: color-mix(in srgb, var(--accent-2) 45%, transparent);
+}
+
+.chip.is-ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 36%, transparent);
+}
+
+.chip.is-warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 36%, transparent);
+}
+
+.chip.is-danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 36%, transparent);
+}
+
+/* ============================================================
+   Hero grammar — eyebrow → art → title → subtitle → CTA
+   ============================================================ */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--s-5) var(--s-4);
+}
+
+.eyebrow {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
+  margin-bottom: var(--s-3);
+}
+
+.hero-art {
+  position: relative;
+  width: 260px;
+  height: 260px;
+  display: grid;
+  place-items: center;
+  animation: hero-float 6s ease-in-out infinite alternate;
+}
+
+.hero-art svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 24px 40px rgba(0, 0, 0, 0.4));
+}
+
+/* coloured halo behind the hero object */
+.hero-art::after {
+  content: "";
+  position: absolute;
+  inset: 6%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--glow), transparent 68%);
+  filter: blur(28px);
+  animation: halo-breathe 8s ease-in-out infinite alternate;
+}
+
+.title {
+  font-size: clamp(30px, 3.4vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
+  margin-top: var(--s-4);
+}
+
+.subtitle {
+  font-size: 17px;
+  font-weight: 400;
+  color: var(--text-dim);
+  max-width: 460px;
+  margin: var(--s-2) auto 0;
+}
+
+/* ============================================================
+   Circular primary CTA
+   ============================================================ */
+
+.cta-circle {
+  --size: 128px;
+  width: var(--size);
+  height: var(--size);
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: center;
+  cursor: pointer;
+  border: none;
+  background:
+    radial-gradient(120% 120% at 30% 22%, rgba(255, 255, 255, 0.35), transparent 55%),
+    linear-gradient(150deg, var(--accent), var(--accent-2));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+    0 10px 30px var(--glow),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(8px) saturate(1.4);
+  backdrop-filter: blur(8px) saturate(1.4);
+  transition:
+    transform var(--t-base) var(--ease),
+    box-shadow var(--t-base) var(--ease),
+    filter var(--t-base) var(--ease);
+  animation: cta-pulse 3.2s var(--ease-soft) infinite;
+}
+
+.cta-circle:hover {
+  transform: translateY(-2px) scale(1.02);
+  filter: brightness(1.06);
+}
+
+.cta-circle:active {
+  transform: scale(0.98);
+}
+
+.cta-circle:focus-visible {
+  outline: 3px solid var(--accent-2);
+  outline-offset: 4px;
+}
+
+.cta-circle:disabled,
+.cta-circle[aria-disabled="true"] {
+  cursor: not-allowed;
+  filter: saturate(0.5) brightness(0.8);
+  animation: none;
+}
+
+/* pill variant — results header / secondary primary actions */
+.cta-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 24px;
+  border-radius: var(--radius-pill);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  border: none;
+  background:
+    radial-gradient(120% 120% at 30% 22%, rgba(255, 255, 255, 0.3), transparent 55%),
+    linear-gradient(150deg, var(--accent), var(--accent-2));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+    0 8px 24px var(--glow),
+    0 2px 6px rgba(0, 0, 0, 0.32);
+  transition:
+    transform var(--t-fast) var(--ease),
+    filter var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.cta-pill svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+}
+
+.cta-pill:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+
+.cta-pill:active {
+  transform: scale(0.98);
+}
+
+.cta-pill:focus-visible {
+  outline: 3px solid var(--accent-2);
+  outline-offset: 3px;
+}
+
+.cta-pill:disabled,
+.cta-pill[aria-disabled="true"] {
+  cursor: not-allowed;
+  filter: saturate(0.5) brightness(0.8);
+}
+
+/* ============================================================
+   Results grid
+   ============================================================ */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: var(--s-3);
+}

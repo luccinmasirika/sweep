@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <!-- ambient world halo behind the tile -->
+    <radialGradient id="appHalo" cx="50%" cy="44%" r="54%">
+      <stop offset="0" stop-color="#6fb0ff" stop-opacity="0.55"/>
+      <stop offset="42%" stop-color="#3d86ff" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#3d86ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- main hexagon body: light top-left -> deep navy bottom-right -->
+    <radialGradient id="appBody" cx="34%" cy="24%" r="92%">
+      <stop offset="0" stop-color="#cfe4ff"/>
+      <stop offset="20%" stop-color="#8dc0ff"/>
+      <stop offset="52%" stop-color="#2e8bff"/>
+      <stop offset="82%" stop-color="#1a4ba8"/>
+      <stop offset="100%" stop-color="#0c2456"/>
+    </radialGradient>
+
+    <!-- glassy bevel rim -->
+    <linearGradient id="appRim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="34%" stop-color="#bcd9ff" stop-opacity="0.35"/>
+      <stop offset="66%" stop-color="#0e2c63" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#06183c" stop-opacity="0.7"/>
+    </linearGradient>
+
+    <!-- top sheen / specular sweep -->
+    <linearGradient id="appSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- glossy X mark fill -->
+    <linearGradient id="appX" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="55%" stop-color="#eaf3ff"/>
+      <stop offset="100%" stop-color="#a9ccff"/>
+    </linearGradient>
+
+    <!-- inner glow rising from the base -->
+    <radialGradient id="appInner" cx="50%" cy="86%" r="62%">
+      <stop offset="0" stop-color="#5fa8ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#5fa8ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="appShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="11"/>
+    </filter>
+    <filter id="appSoft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+    <filter id="appBlurSheen" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2"/>
+    </filter>
+  </defs>
+
+  <!-- world halo -->
+  <circle cx="120" cy="108" r="104" fill="url(#appHalo)"/>
+
+  <!-- contact shadow -->
+  <ellipse cx="120" cy="206" rx="66" ry="16" fill="#04122e" opacity="0.55" filter="url(#appShadow)"/>
+
+  <!-- bevel rim (slightly larger hexagon under the body) -->
+  <path d="M120 24 L186 60 L186 152 L120 188 L54 152 L54 60 Z"
+        fill="url(#appRim)"/>
+
+  <!-- main glossy hexagon body -->
+  <path d="M120 30 L181 63 L181 149 L120 182 L59 149 L59 63 Z"
+        fill="url(#appBody)"/>
+
+  <!-- inner glow from base -->
+  <path d="M120 30 L181 63 L181 149 L120 182 L59 149 L59 63 Z"
+        fill="url(#appInner)"/>
+
+  <!-- top sheen, clipped to the upper portion of the hexagon -->
+  <path d="M120 30 L181 63 L181 104 Q120 132 59 104 L59 63 Z"
+        fill="url(#appSheen)" opacity="0.85" filter="url(#appBlurSheen)"/>
+
+  <!-- crisp specular highlight ellipses -->
+  <ellipse cx="100" cy="58" rx="40" ry="17" fill="#ffffff" opacity="0.5" filter="url(#appSoft)"/>
+  <ellipse cx="92" cy="52" rx="20" ry="8" fill="#ffffff" opacity="0.8" filter="url(#appBlurSheen)"/>
+
+  <!-- bright top edges of the rim -->
+  <path d="M120 30 L181 63" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+  <path d="M120 30 L59 63" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- embossed X: soft dark recess shadow under the strokes -->
+  <g opacity="0.45" filter="url(#appSoft)">
+    <path d="M96 86l50 50M146 86l-50 50" stroke="#0a2150" stroke-width="15" stroke-linecap="round"/>
+  </g>
+
+  <!-- glossy X mark -->
+  <path d="M95 84l50 50M145 84l-50 50" stroke="url(#appX)" stroke-width="14" stroke-linecap="round"/>
+
+  <!-- specular dot on the X crossing -->
+  <ellipse cx="111" cy="100" rx="9" ry="5" fill="#ffffff" opacity="0.7" filter="url(#appBlurSheen)"/>
+</svg>

@@ -1,115 +1,138 @@
-// Files screen — "Large & Old" + "Duplicates".
+// Files — the Teal "My Clutter" world. Two clutter hunts share one stage:
 //
-// Two halves:
-//   1. scan(["projects","large-items"]) rendered as sortable, selectable lists.
-//   2. A folder picker that runs dupes(path) and renders duplicate sets with
-//      a keep-one / trash-rest workflow.
-// Everything reclaimable flows through clean(paths). Destructive actions are
-// confirmed first. All sizing is human-readable via formatBytes.
+//   1. scan(["projects","large-items"]) → sortable glass lists of the largest,
+//      oldest, most reclaimable items, with keep/trash selection.
+//   2. dupes(path) for a chosen folder → duplicate sets with a keep-one /
+//      trash-the-rest workflow.
+//
+// Everything reclaimable funnels through clean(paths). The idle state is the
+// hero grammar (eyebrow → glossy twin-folder art → title → subtitle → circular
+// Scan CTA); a scan cross-fades to the results grid. Destructive actions are
+// always confirmed and items move to the Trash, never deleted outright.
 
 import type { Api } from "../api";
 import type { DupeSet, Finding, Report } from "../types";
-import { button, card, formatBytes, spinner, toast } from "../components";
+import { button, formatBytes, icon, spinner, toast } from "../components";
+import heroRaw from "../assets/illustrations/files.svg?raw";
 
 type SortKey = "size" | "name";
 
 interface ListState {
+  target: string;
   findings: Finding[];
   selected: Set<string>;
   sort: SortKey;
   desc: boolean;
 }
 
+const TARGET_META: Record<string, { label: string; hint: string; icon: string }> = {
+  projects: {
+    label: "Projects",
+    hint: "Dev project folders and their build artifacts",
+    icon: "folder",
+  },
+  "large-items": {
+    label: "Large items",
+    hint: "Big files left untouched for a while",
+    icon: "files",
+  },
+};
+
 export function renderFiles(root: HTMLElement, api: Api): void {
   injectStyles();
 
   const screen = document.createElement("div");
-  screen.className = "screen screen-files";
-
-  const header = el("header", "files-head");
-  header.innerHTML = `
-    <h2 class="files-title">Files</h2>
-    <p class="files-sub text-dim">Track down the largest, oldest, and duplicated files eating your disk.</p>`;
-  screen.appendChild(header);
-
-  // --- Large & Old section ---------------------------------------------------
-  const largeSection = el("section", "files-section");
-  screen.appendChild(largeSection);
-
-  // --- Duplicates section ----------------------------------------------------
-  const dupesSection = el("section", "files-section");
-  screen.appendChild(dupesSection);
-
+  screen.className = "screen fl";
   root.appendChild(screen);
 
-  mountLargeAndOld(largeSection, api);
-  mountDuplicates(dupesSection, api);
-}
+  // Both stages live in one column and cross-fade between each other.
+  const hero = document.createElement("section");
+  hero.className = "fl-hero";
+  screen.appendChild(hero);
 
-/* ------------------------------------------------------------------ */
-/* Large & Old                                                         */
-/* ------------------------------------------------------------------ */
+  const results = document.createElement("section");
+  results.className = "fl-results";
+  results.hidden = true;
+  screen.appendChild(results);
 
-const TARGET_META: Record<string, { label: string; hint: string }> = {
-  projects: { label: "Projects", hint: "Dev project folders and their build artifacts" },
-  "large-items": { label: "Large items", hint: "Big files that haven't been touched in a while" },
-};
+  const lists = new Map<string, ListState>();
 
-function mountLargeAndOld(host: HTMLElement, api: Api): void {
-  const c = card({ className: "files-card" });
+  // ---- hero (idle) ----------------------------------------------------------
+  hero.innerHTML = `
+    <div class="eyebrow">My Clutter</div>
+    <div class="hero-art" aria-hidden="true">${heroRaw}</div>
+    <h1 class="title">Find what's quietly piling up.</h1>
+    <p class="subtitle">Surface oversized projects and forgotten files, then hunt down duplicate copies — keep one, trash the rest.</p>
+    <div class="fl-cta-pedestal"></div>
+    <p class="fl-hint">Nothing is deleted — items move to the Trash.</p>`;
 
-  const head = el("div", "card-head");
+  const ctaHost = hero.querySelector<HTMLElement>(".fl-cta-pedestal")!;
+  const scanCta = document.createElement("button");
+  scanCta.type = "button";
+  scanCta.className = "cta-circle fl-cta";
+  scanCta.textContent = "Scan";
+  scanCta.setAttribute("aria-label", "Scan for large and old files");
+  scanCta.addEventListener("click", () => void runScan());
+  ctaHost.appendChild(scanCta);
+
+  attachParallax(hero.querySelector<HTMLElement>(".hero-art")!);
+
+  // ---- results layout (built once, populated per scan) ----------------------
+  const head = document.createElement("div");
+  head.className = "results-head";
   head.innerHTML = `
-    <div>
-      <h3 class="card-title">Large &amp; Old</h3>
-      <p class="card-hint text-dim">Projects and oversized files surfaced by a deep scan.</p>
-    </div>`;
-  const actions = el("div", "card-actions");
-  head.appendChild(actions);
-  c.appendChild(head);
+    <div class="fl-head-text">
+      <h2 class="fl-head-title">Your clutter is ready</h2>
+      <p class="results-sub fl-head-sub"></p>
+    </div>
+    <div class="results-actions"></div>`;
+  const headActions = head.querySelector<HTMLElement>(".results-actions")!;
+  const headSub = head.querySelector<HTMLElement>(".fl-head-sub")!;
 
-  const body = el("div", "card-body");
-  c.appendChild(body);
-
-  host.appendChild(c);
-
-  const states = new Map<string, ListState>();
-
-  const cleanBtn = button({
-    label: "Clean selected",
-    variant: "primary",
-    onClick: () => void cleanSelected(),
-  });
-  cleanBtn.disabled = true;
+  const cleanPill = document.createElement("button");
+  cleanPill.type = "button";
+  cleanPill.className = "cta-pill fl-clean-pill";
+  cleanPill.appendChild(icon("trash", { size: 16 }));
+  cleanPill.appendChild(elText("span", "Clean selected"));
+  cleanPill.addEventListener("click", () => void cleanSelected());
 
   const rescanBtn = button({
     label: "Rescan",
     variant: "ghost",
-    onClick: () => void load(),
+    icon: "refresh",
+    onClick: () => void runScan(),
   });
 
-  actions.append(rescanBtn, cleanBtn);
+  headActions.append(cleanPill, rescanBtn);
 
+  const grid = document.createElement("div");
+  grid.className = "grid fl-grid";
+
+  const dupes = buildDuplicates(api);
+
+  results.append(head, grid, dupes.root);
+
+  // ---- selection plumbing ---------------------------------------------------
   function selectedPaths(): string[] {
-    const paths: string[] = [];
-    for (const st of states.values()) {
-      for (const f of st.findings) if (st.selected.has(f.path)) paths.push(f.path);
-    }
-    return paths;
+    const out: string[] = [];
+    for (const st of lists.values())
+      for (const f of st.findings) if (st.selected.has(f.path)) out.push(f.path);
+    return out;
   }
 
   function selectedSize(): number {
     let total = 0;
-    for (const st of states.values()) {
+    for (const st of lists.values())
       for (const f of st.findings) if (st.selected.has(f.path)) total += f.size;
-    }
     return total;
   }
 
-  function refreshCleanBtn(): void {
+  function refreshCleanPill(): void {
     const paths = selectedPaths();
-    cleanBtn.disabled = paths.length === 0;
-    cleanBtn.textContent = paths.length
+    const label = cleanPill.querySelector("span")!;
+    cleanPill.toggleAttribute("disabled", paths.length === 0);
+    cleanPill.setAttribute("aria-disabled", paths.length === 0 ? "true" : "false");
+    label.textContent = paths.length
       ? `Clean ${paths.length} item${paths.length > 1 ? "s" : ""} · ${formatBytes(selectedSize())}`
       : "Clean selected";
   }
@@ -123,12 +146,10 @@ function mountLargeAndOld(host: HTMLElement, api: Api): void {
         selectedSize()
       )}) to the Trash. You can restore them from there.`,
       confirmLabel: "Move to Trash",
-      danger: true,
     });
     if (!ok) return;
 
-    cleanBtn.disabled = true;
-    cleanBtn.textContent = "Cleaning…";
+    setPillBusy(cleanPill, "Cleaning…");
     try {
       const res = await api.clean(paths, false);
       toast(
@@ -138,225 +159,275 @@ function mountLargeAndOld(host: HTMLElement, api: Api): void {
               res.trashed > 1 ? "s" : ""
             }`
       );
-      await load();
+      await runScan();
     } catch (err) {
+      clearPillBusy(cleanPill);
       toast(`Cleanup failed: ${errMsg(err)}`);
-      refreshCleanBtn();
+      refreshCleanPill();
+    }
+  }
+
+  // ---- scan flow ------------------------------------------------------------
+  async function runScan(): Promise<void> {
+    showResults();
+    headActions.style.visibility = "hidden";
+    headSub.textContent = "Scanning projects and large files…";
+    grid.replaceChildren(loadingTile("Hunting through your projects and large files…"));
+
+    try {
+      const reports = await api.scan(["projects", "large-items"]);
+      renderGroups(reports);
+    } catch (err) {
+      grid.replaceChildren(
+        errorTile("Scan failed", errMsg(err), () => void runScan())
+      );
+      headActions.style.visibility = "hidden";
+      headSub.textContent = "Something went wrong.";
     }
   }
 
   function renderGroups(reports: Report[]): void {
-    body.replaceChildren();
-    states.clear();
+    grid.replaceChildren();
+    lists.clear();
 
     const nonEmpty = reports.filter((r) => r.findings.length > 0);
     if (nonEmpty.length === 0) {
-      body.appendChild(
-        emptyState(
+      grid.replaceChildren(
+        emptyTile(
           "Nothing oversized",
           "Your projects and large files are all within reason. Nice and tidy."
         )
       );
-      refreshCleanBtn();
+      headActions.style.visibility = "hidden";
+      headSub.textContent = "All tidy. Try the duplicate finder below.";
       return;
     }
 
+    let total = 0;
+    let count = 0;
     for (const report of nonEmpty) {
-      const meta = TARGET_META[report.target] ?? {
-        label: report.target,
-        hint: "",
-      };
       const st: ListState = {
+        target: report.target,
         findings: report.findings.slice(),
         selected: new Set(),
         sort: "size",
         desc: true,
       };
-      states.set(report.target, st);
-      body.appendChild(renderGroup(meta, st));
+      lists.set(report.target, st);
+      total += st.findings.reduce((a, f) => a + f.size, 0);
+      count += st.findings.length;
+      grid.appendChild(buildGroupTile(st, refreshCleanPill));
     }
-    refreshCleanBtn();
+
+    headSub.textContent = `${count} item${count > 1 ? "s" : ""} · up to ${formatBytes(
+      total
+    )} reclaimable`;
+    headActions.style.visibility = "visible";
+    refreshCleanPill();
+    staggerIn(grid);
   }
 
-  function renderGroup(
-    meta: { label: string; hint: string },
-    st: ListState
-  ): HTMLElement {
-    const group = el("div", "files-group");
+  function showResults(): void {
+    if (!results.hidden) return;
+    hero.classList.add("is-leaving");
+    window.setTimeout(() => {
+      hero.hidden = true;
+      results.hidden = false;
+      requestAnimationFrame(() => results.classList.add("is-in"));
+    }, 200);
+  }
+}
 
-    const total = st.findings.reduce((a, f) => a + f.size, 0);
-    const gh = el("div", "files-group-head");
-    gh.innerHTML = `
-      <label class="files-group-toggle">
-        <input type="checkbox" class="ckbx files-group-all" aria-label="Select all in ${meta.label}" />
-        <span class="files-group-name">${escapeHtml(meta.label)}</span>
-        <span class="files-group-count text-dim">${st.findings.length} item${
-      st.findings.length > 1 ? "s" : ""
-    } · ${formatBytes(total)}</span>
-      </label>`;
+/* ------------------------------------------------------------------ */
+/* Large & Old — group tiles                                           */
+/* ------------------------------------------------------------------ */
 
-    const sortWrap = el("div", "files-sort");
-    sortWrap.append(
-      sortChip("Size", "size", st),
-      sortChip("Name", "name", st)
+function buildGroupTile(st: ListState, onChange: () => void): HTMLElement {
+  const meta = TARGET_META[st.target] ?? { label: st.target, hint: "", icon: "files" };
+  const total = st.findings.reduce((a, f) => a + f.size, 0);
+
+  const tile = document.createElement("article");
+  tile.className = "glass-card fl-tile";
+
+  const top = document.createElement("div");
+  top.className = "fl-tile-top";
+
+  const chip = document.createElement("span");
+  chip.className = "fl-tile-chip";
+  chip.appendChild(icon(meta.icon, { size: 20 }));
+
+  const heading = document.createElement("div");
+  heading.className = "fl-tile-heading";
+  heading.innerHTML = `
+    <span class="fl-tile-label"></span>
+    <span class="fl-tile-meta"></span>`;
+  heading.querySelector(".fl-tile-label")!.textContent = meta.label;
+  heading.querySelector(".fl-tile-meta")!.textContent = `${st.findings.length} item${
+    st.findings.length > 1 ? "s" : ""
+  } · ${formatBytes(total)}`;
+
+  const allLabel = document.createElement("label");
+  allLabel.className = "fl-tile-all";
+  const allBox = document.createElement("input");
+  allBox.type = "checkbox";
+  allBox.className = "check";
+  allBox.setAttribute("aria-label", `Select all in ${meta.label}`);
+  allLabel.appendChild(allBox);
+
+  top.append(chip, heading, allLabel);
+  tile.appendChild(top);
+
+  if (meta.hint) {
+    const hint = document.createElement("p");
+    hint.className = "fl-tile-hint";
+    hint.textContent = meta.hint;
+    tile.appendChild(hint);
+  }
+
+  const sortRow = document.createElement("div");
+  sortRow.className = "fl-sort";
+  sortRow.append(sortChip("Size", "size", st, paint), sortChip("Name", "name", st, paint));
+  tile.appendChild(sortRow);
+
+  const list = document.createElement("ul");
+  list.className = "fl-list";
+  list.setAttribute("role", "list");
+  tile.appendChild(list);
+
+  function sync(): void {
+    const all = st.findings.length > 0 && st.selected.size === st.findings.length;
+    allBox.checked = all;
+    allBox.indeterminate = !all && st.selected.size > 0;
+    onChange();
+  }
+
+  function paint(): void {
+    const sorted = sortFindings(st);
+    const maxSize = sorted.reduce((m, f) => Math.max(m, f.size), 0);
+    list.replaceChildren();
+    for (const f of sorted) list.appendChild(buildRow(f, st, maxSize, sync));
+    sortRow.querySelectorAll<HTMLButtonElement>(".fl-sort-chip").forEach((c) =>
+      c.dispatchEvent(new CustomEvent("sync-chip"))
     );
-    gh.appendChild(sortWrap);
-    group.appendChild(gh);
+  }
 
-    if (meta.hint) {
-      const hint = el("p", "files-group-hint text-dim");
-      hint.textContent = meta.hint;
-      group.appendChild(hint);
-    }
-
-    const list = el("ul", "files-list");
-    list.setAttribute("role", "list");
-    group.appendChild(list);
-
-    const groupAll = gh.querySelector<HTMLInputElement>(".files-group-all")!;
-
-    const paint = (): void => {
-      const sorted = sortFindings(st);
-      const maxSize = sorted.reduce((m, f) => Math.max(m, f.size), 0);
-      list.replaceChildren();
-      for (const f of sorted) list.appendChild(renderRow(f, st, maxSize, sync));
-    };
-
-    function sync(): void {
-      const all = st.findings.length > 0 && st.selected.size === st.findings.length;
-      groupAll.checked = all;
-      groupAll.indeterminate = !all && st.selected.size > 0;
-      refreshCleanBtn();
-    }
-
-    groupAll.addEventListener("change", () => {
-      if (groupAll.checked) for (const f of st.findings) st.selected.add(f.path);
-      else st.selected.clear();
-      paint();
-      sync();
-    });
-
-    // Repaint hook used by the sort chips.
-    (group as HTMLElement & { _repaint?: () => void })._repaint = paint;
-
+  allBox.addEventListener("change", () => {
+    if (allBox.checked) for (const f of st.findings) st.selected.add(f.path);
+    else st.selected.clear();
     paint();
     sync();
-    return group;
-  }
+  });
 
-  function renderRow(
-    f: Finding,
-    st: ListState,
-    maxSize: number,
-    onChange: () => void
-  ): HTMLElement {
-    const li = el("li", "files-row");
-    const id = `lf-${hash(f.path)}`;
+  paint();
+  sync();
+  return tile;
+}
 
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "ckbx";
-    cb.id = id;
-    cb.checked = st.selected.has(f.path);
-    cb.addEventListener("change", () => {
-      if (cb.checked) st.selected.add(f.path);
-      else st.selected.delete(f.path);
-      li.classList.toggle("is-selected", cb.checked);
-      onChange();
-    });
+function buildRow(
+  f: Finding,
+  st: ListState,
+  maxSize: number,
+  onChange: () => void
+): HTMLElement {
+  const li = document.createElement("li");
+  li.className = "fl-row";
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "check fl-row-check";
+  cb.checked = st.selected.has(f.path);
+  cb.setAttribute("aria-label", basename(f.path));
+  cb.addEventListener("change", () => {
+    if (cb.checked) st.selected.add(f.path);
+    else st.selected.delete(f.path);
     li.classList.toggle("is-selected", cb.checked);
+    onChange();
+  });
+  li.classList.toggle("is-selected", cb.checked);
 
-    const main = el("label", "files-row-main");
-    main.setAttribute("for", id);
+  const main = document.createElement("div");
+  main.className = "fl-row-main";
 
-    const name = el("span", "files-row-name");
-    name.textContent = basename(f.path);
-    name.title = f.path;
+  const name = document.createElement("span");
+  name.className = "fl-row-name";
+  name.textContent = basename(f.path);
+  name.title = f.path;
 
-    const sub = el("span", "files-row-path text-dim");
-    sub.textContent = dirname(f.path);
-    sub.title = f.path;
+  const sub = document.createElement("span");
+  sub.className = "fl-row-path";
+  sub.textContent = shortPath(dirname(f.path));
+  sub.title = f.path;
 
-    const bar = el("div", "files-row-bar");
-    const fill = el("div", "files-row-bar-fill");
-    fill.style.width = maxSize > 0 ? `${Math.max(3, (f.size / maxSize) * 100)}%` : "0%";
-    bar.appendChild(fill);
+  const bar = document.createElement("div");
+  bar.className = "sizebar fl-row-bar";
+  const fill = document.createElement("div");
+  fill.className = "sizebar-fill";
+  bar.appendChild(fill);
+  requestAnimationFrame(() => {
+    fill.style.width = maxSize > 0 ? `${Math.max(4, (f.size / maxSize) * 100)}%` : "0%";
+  });
 
-    main.append(name, sub, bar);
+  main.append(name, sub, bar);
 
-    const meta = el("div", "files-row-meta");
-    const size = el("span", "files-row-size");
-    size.textContent = formatBytes(f.size);
-    meta.appendChild(size);
+  const metaCol = document.createElement("div");
+  metaCol.className = "fl-row-meta";
+  const size = document.createElement("span");
+  size.className = "fl-row-size tnum";
+  size.textContent = formatBytes(f.size);
+  metaCol.appendChild(size);
 
-    const tags = el("div", "files-row-tags");
-    if (f.stale) tags.appendChild(tag("Old", "stale"));
-    if (f.risky) tags.appendChild(tag("Risky", "risky"));
-    if (tags.childElementCount) meta.appendChild(tags);
+  const tags = document.createElement("div");
+  tags.className = "fl-row-tags";
+  if (f.stale) tags.appendChild(tagPill("Old", "is-warn"));
+  if (f.risky) tags.appendChild(tagPill("Risky", "is-danger"));
+  if (tags.childElementCount) metaCol.appendChild(tags);
 
-    li.append(cb, main, meta);
-    return li;
-  }
+  li.append(cb, main, metaCol);
+  return li;
+}
 
-  function sortChip(label: string, key: SortKey, st: ListState): HTMLButtonElement {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "files-sort-chip";
-    const apply = (): void => {
-      btn.classList.toggle("is-active", st.sort === key);
-      btn.setAttribute(
-        "aria-label",
-        `Sort by ${label}${st.sort === key ? (st.desc ? ", descending" : ", ascending") : ""}`
-      );
-      btn.innerHTML = `${label}${
-        st.sort === key ? `<span class="files-sort-arrow">${st.desc ? "↓" : "↑"}</span>` : ""
-      }`;
-    };
-    btn.addEventListener("click", () => {
-      if (st.sort === key) st.desc = !st.desc;
-      else {
-        st.sort = key;
-        st.desc = key === "size";
-      }
-      // Repaint this group and refresh every chip's active state.
-      const group = btn.closest(".files-group") as
-        | (HTMLElement & { _repaint?: () => void })
-        | null;
-      group?._repaint?.();
-      group?.querySelectorAll<HTMLButtonElement>(".files-sort-chip").forEach((c) =>
-        c.dispatchEvent(new CustomEvent("sync-chip"))
-      );
-    });
-    btn.addEventListener("sync-chip", apply);
-    apply();
-    return btn;
-  }
+function sortChip(
+  label: string,
+  key: SortKey,
+  st: ListState,
+  repaint: () => void
+): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "fl-sort-chip";
 
-  async function load(): Promise<void> {
-    body.replaceChildren(loadingBlock("Scanning projects and large files…"));
-    cleanBtn.disabled = true;
-    rescanBtn.disabled = true;
-    try {
-      const reports = await api.scan(["projects", "large-items"]);
-      renderGroups(reports);
-    } catch (err) {
-      body.replaceChildren(
-        errorState("Scan failed", errMsg(err), () => void load())
-      );
-    } finally {
-      rescanBtn.disabled = false;
+  const apply = (): void => {
+    const active = st.sort === key;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute(
+      "aria-label",
+      `Sort by ${label}${active ? (st.desc ? ", descending" : ", ascending") : ""}`
+    );
+    btn.innerHTML = `${label}${
+      active ? `<span class="fl-sort-arrow">${st.desc ? "↓" : "↑"}</span>` : ""
+    }`;
+  };
+
+  btn.addEventListener("click", () => {
+    if (st.sort === key) st.desc = !st.desc;
+    else {
+      st.sort = key;
+      st.desc = key === "size";
     }
-  }
-
-  void load();
+    repaint();
+  });
+  btn.addEventListener("sync-chip", apply);
+  apply();
+  return btn;
 }
 
 function sortFindings(st: ListState): Finding[] {
   const arr = st.findings.slice();
   arr.sort((a, b) => {
-    let cmp: number;
-    if (st.sort === "size") cmp = a.size - b.size;
-    else cmp = basename(a.path).localeCompare(basename(b.path), undefined, { numeric: true });
+    const cmp =
+      st.sort === "size"
+        ? a.size - b.size
+        : basename(a.path).localeCompare(basename(b.path), undefined, { numeric: true });
     return st.desc ? -cmp : cmp;
   });
   return arr;
@@ -366,58 +437,71 @@ function sortFindings(st: ListState): Finding[] {
 /* Duplicates                                                          */
 /* ------------------------------------------------------------------ */
 
-function mountDuplicates(host: HTMLElement, api: Api): void {
-  const c = card({ className: "files-card" });
+function buildDuplicates(api: Api): { root: HTMLElement } {
+  const root = document.createElement("section");
+  root.className = "glass fl-dupes";
 
-  const head = el("div", "card-head");
+  const head = document.createElement("div");
+  head.className = "fl-dupes-head";
   head.innerHTML = `
-    <div>
-      <h3 class="card-title">Find duplicates</h3>
-      <p class="card-hint text-dim">Pick a folder to scan for identical files. Keep one copy, trash the rest.</p>
+    <span class="fl-dupes-chip"></span>
+    <div class="fl-dupes-heading">
+      <h3 class="fl-dupes-title">Find duplicates</h3>
+      <p class="fl-dupes-hint">Pick a folder to scan for identical files. Keep one copy, trash the rest.</p>
     </div>`;
-  c.appendChild(head);
+  head.querySelector(".fl-dupes-chip")!.appendChild(icon("search", { size: 20 }));
+  root.appendChild(head);
 
-  const picker = el("div", "dupes-picker");
+  const picker = document.createElement("div");
+  picker.className = "fl-picker";
+
+  const inputWrap = document.createElement("div");
+  inputWrap.className = "fl-input-wrap";
+  inputWrap.appendChild(icon("folder", { size: 16, className: "fl-input-icon" }));
   const input = document.createElement("input");
   input.type = "text";
-  input.className = "dupes-input";
+  input.className = "fl-input";
   input.placeholder = "/Users/you/Downloads";
   input.spellcheck = false;
   input.autocapitalize = "off";
   input.setAttribute("aria-label", "Folder to scan for duplicates");
+  inputWrap.appendChild(input);
 
   const browseBtn = button({
     label: "Browse…",
     variant: "ghost",
     onClick: () => void browse(),
   });
-  const scanBtn = button({
-    label: "Scan",
-    variant: "primary",
-    onClick: () => void scan(),
-  });
 
-  picker.append(input, browseBtn, scanBtn);
-  c.appendChild(picker);
+  const scanBtn = document.createElement("button");
+  scanBtn.type = "button";
+  scanBtn.className = "cta-pill fl-dupes-scan";
+  scanBtn.appendChild(icon("scan", { size: 16 }));
+  scanBtn.appendChild(elText("span", "Find"));
+  scanBtn.addEventListener("click", () => void scan());
 
-  const results = el("div", "dupes-results");
-  c.appendChild(results);
+  picker.append(inputWrap, browseBtn, scanBtn);
+  root.appendChild(picker);
 
-  host.appendChild(c);
+  const out = document.createElement("div");
+  out.className = "fl-dupes-out";
+  root.appendChild(out);
 
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") void scan();
   });
 
   async function browse(): Promise<void> {
-    // Use the Tauri dialog plugin when present; otherwise fall back to the
-    // text input (which is always a valid way to provide a path).
     try {
       const specifier = "@tauri-apps/plugin-dialog";
       const mod = await import(/* @vite-ignore */ specifier).catch(() => null);
       const open = (mod as { open?: (o: unknown) => Promise<unknown> } | null)?.open;
       if (typeof open === "function") {
-        const picked = await open({ directory: true, multiple: false, title: "Choose a folder" });
+        const picked = await open({
+          directory: true,
+          multiple: false,
+          title: "Choose a folder",
+        });
         if (typeof picked === "string" && picked) {
           input.value = picked;
           void scan();
@@ -428,104 +512,107 @@ function mountDuplicates(host: HTMLElement, api: Api): void {
       /* fall through to manual entry */
     }
     input.focus();
-    toast("Type a folder path, then press Scan.");
+    toast("Type a folder path, then press Find.");
   }
 
   async function scan(): Promise<void> {
     const path = input.value.trim();
     if (!path) {
       input.focus();
-      input.classList.add("is-invalid");
-      setTimeout(() => input.classList.remove("is-invalid"), 600);
+      inputWrap.classList.add("is-invalid");
+      window.setTimeout(() => inputWrap.classList.remove("is-invalid"), 600);
       toast("Enter a folder path to scan.");
       return;
     }
 
-    scanBtn.disabled = true;
+    setPillBusy(scanBtn, "Scanning…");
     browseBtn.disabled = true;
-    results.replaceChildren(loadingBlock(`Hunting for duplicates in ${shortPath(path)}…`));
+    out.replaceChildren(loadingTile(`Hunting for duplicates in ${shortPath(path)}…`));
 
     try {
       const sets = await api.dupes(path);
       renderDupes(sets, path);
     } catch (err) {
-      results.replaceChildren(
-        errorState("Could not scan that folder", errMsg(err), () => void scan())
+      out.replaceChildren(
+        errorTile("Could not scan that folder", errMsg(err), () => void scan())
       );
     } finally {
-      scanBtn.disabled = false;
+      clearPillBusy(scanBtn);
       browseBtn.disabled = false;
     }
   }
 
   function renderDupes(sets: DupeSet[], scannedPath: string): void {
-    results.replaceChildren();
+    out.replaceChildren();
 
     const usable = sets.filter((s) => s.paths.length > 1);
     if (usable.length === 0) {
-      results.appendChild(
-        emptyState(
-          "No duplicates found",
-          `Every file in ${shortPath(scannedPath)} is unique.`
-        )
+      out.appendChild(
+        emptyTile("No duplicates found", `Every file in ${shortPath(scannedPath)} is unique.`)
       );
       return;
     }
 
     const totalReclaim = usable.reduce((a, s) => a + s.reclaimable, 0);
 
-    const summary = el("div", "dupes-summary");
-    summary.innerHTML = `
-      <span class="dupes-summary-count">${usable.length} duplicate set${
-      usable.length > 1 ? "s" : ""
-    }</span>
-      <span class="dupes-summary-reclaim text-dim">up to ${formatBytes(
-        totalReclaim
-      )} reclaimable</span>`;
-    results.appendChild(summary);
-
-    // Selection: for each set, the paths chosen to be trashed (default = all
-    // but the first, "keep one").
+    // For each set the paths chosen for the Trash (default: all but the first).
     const trash = new Map<number, Set<string>>();
     usable.forEach((s, i) => trash.set(i, new Set(s.paths.slice(1))));
 
-    const cleanBar = el("div", "dupes-cleanbar");
-    const cleanBtn = button({
-      label: "Trash selected duplicates",
-      variant: "danger",
-      onClick: () => void cleanDupes(),
-    });
-    cleanBar.appendChild(cleanBtn);
+    const summary = document.createElement("div");
+    summary.className = "fl-dupes-summary";
+    summary.innerHTML = `
+      <span class="fl-dupes-count"></span>
+      <span class="fl-dupes-reclaim"></span>`;
+    summary.querySelector(".fl-dupes-count")!.textContent = `${usable.length} duplicate set${
+      usable.length > 1 ? "s" : ""
+    }`;
+    summary.querySelector(".fl-dupes-reclaim")!.textContent = `up to ${formatBytes(
+      totalReclaim
+    )} reclaimable`;
+    out.appendChild(summary);
 
-    const list = el("div", "dupes-list");
-    results.appendChild(list);
-    results.appendChild(cleanBar);
+    const setGrid = document.createElement("div");
+    setGrid.className = "grid fl-dupes-grid";
+    out.appendChild(setGrid);
+
+    const cleanBar = document.createElement("div");
+    cleanBar.className = "fl-dupes-cleanbar";
+    const cleanBtn = document.createElement("button");
+    cleanBtn.type = "button";
+    cleanBtn.className = "cta-pill fl-dupes-clean";
+    cleanBtn.appendChild(icon("trash", { size: 16 }));
+    cleanBtn.appendChild(elText("span", "Trash duplicates"));
+    cleanBtn.addEventListener("click", () => void cleanDupes());
+    cleanBar.appendChild(cleanBtn);
+    out.appendChild(cleanBar);
 
     function selectedTrash(): string[] {
-      const out: string[] = [];
-      for (const set of trash.values()) for (const p of set) out.push(p);
-      return out;
+      const list: string[] = [];
+      for (const set of trash.values()) for (const p of set) list.push(p);
+      return list;
     }
 
     function selectedReclaim(): number {
       let total = 0;
       usable.forEach((s, i) => {
-        const set = trash.get(i)!;
-        total += set.size * s.size;
+        total += trash.get(i)!.size * s.size;
       });
       return total;
     }
 
     function refreshCleanBar(): void {
       const n = selectedTrash().length;
-      cleanBtn.disabled = n === 0;
-      cleanBtn.textContent = n
+      const label = cleanBtn.querySelector("span")!;
+      cleanBtn.toggleAttribute("disabled", n === 0);
+      cleanBtn.setAttribute("aria-disabled", n === 0 ? "true" : "false");
+      label.textContent = n
         ? `Trash ${n} duplicate${n > 1 ? "s" : ""} · ${formatBytes(selectedReclaim())}`
-        : "Trash selected duplicates";
+        : "Trash duplicates";
     }
 
     usable.forEach((set, i) => {
-      list.appendChild(renderDupeSet(set, i, trash.get(i)!, refreshCleanBar));
+      setGrid.appendChild(buildDupeTile(set, i, trash.get(i)!, refreshCleanBar));
     });
 
     async function cleanDupes(): Promise<void> {
@@ -539,12 +626,10 @@ function mountDuplicates(host: HTMLElement, api: Api): void {
           selectedReclaim()
         )}) to the Trash. One copy of each is always kept.`,
         confirmLabel: "Move to Trash",
-        danger: true,
       });
       if (!ok) return;
 
-      cleanBtn.disabled = true;
-      cleanBtn.textContent = "Trashing…";
+      setPillBusy(cleanBtn, "Trashing…");
       try {
         const res = await api.clean(paths, false);
         toast(
@@ -556,131 +641,126 @@ function mountDuplicates(host: HTMLElement, api: Api): void {
         );
         await scan();
       } catch (err) {
+        clearPillBusy(cleanBtn);
         toast(`Cleanup failed: ${errMsg(err)}`);
         refreshCleanBar();
       }
     }
 
     refreshCleanBar();
+    staggerIn(setGrid);
   }
 
-  function renderDupeSet(
-    set: DupeSet,
-    index: number,
-    trashSet: Set<string>,
-    onChange: () => void
-  ): HTMLElement {
-    const wrap = el("div", "dupe-set");
+  return { root };
+}
 
-    const sh = el("div", "dupe-set-head");
-    sh.innerHTML = `
-      <span class="dupe-set-title">${set.paths.length} copies · ${formatBytes(
-      set.size
-    )} each</span>
-      <span class="dupe-set-reclaim text-dim">${formatBytes(
-        set.reclaimable
-      )} reclaimable</span>`;
-    wrap.appendChild(sh);
+function buildDupeTile(
+  set: DupeSet,
+  index: number,
+  trashSet: Set<string>,
+  onChange: () => void
+): HTMLElement {
+  const tile = document.createElement("article");
+  tile.className = "glass-card fl-dupe";
 
-    const rows = el("div", "dupe-set-rows");
-    const name = `dupe-keep-${index}`;
+  const top = document.createElement("div");
+  top.className = "fl-dupe-top";
+  top.innerHTML = `
+    <span class="fl-dupe-count"></span>
+    <span class="fl-dupe-reclaim"></span>`;
+  top.querySelector(".fl-dupe-count")!.textContent = `${set.paths.length} copies · ${formatBytes(
+    set.size
+  )} each`;
+  top.querySelector(".fl-dupe-reclaim")!.textContent = `${formatBytes(set.reclaimable)} reclaimable`;
+  tile.appendChild(top);
 
-    const paint = (): void => {
-      rows.replaceChildren();
-      set.paths.forEach((p) => {
-        const kept = !trashSet.has(p);
-        const row = el("label", "dupe-row");
-        row.classList.toggle("is-kept", kept);
+  const rows = document.createElement("div");
+  rows.className = "fl-dupe-rows";
+  const name = `fl-keep-${index}`;
+  tile.appendChild(rows);
 
-        const radio = document.createElement("input");
-        radio.type = "radio";
-        radio.name = name;
-        radio.className = "dupe-keep-radio";
-        radio.checked = kept;
-        radio.setAttribute("aria-label", `Keep ${basename(p)}`);
-        radio.addEventListener("change", () => {
-          if (radio.checked) {
-            trashSet.clear();
-            for (const other of set.paths) if (other !== p) trashSet.add(other);
-            paint();
-            onChange();
-          }
-        });
+  const paint = (): void => {
+    rows.replaceChildren();
+    set.paths.forEach((p) => {
+      const kept = !trashSet.has(p);
+      const row = document.createElement("label");
+      row.className = "fl-dupe-row";
+      row.classList.toggle("is-kept", kept);
 
-        const info = el("div", "dupe-row-info");
-        const fn = el("span", "dupe-row-name");
-        fn.textContent = basename(p);
-        fn.title = p;
-        const dir = el("span", "dupe-row-dir text-dim");
-        dir.textContent = dirname(p);
-        dir.title = p;
-        info.append(fn, dir);
-
-        const badge = el("span", `dupe-row-badge ${kept ? "is-keep" : "is-trash"}`);
-        badge.textContent = kept ? "Keep" : "Trash";
-
-        row.append(radio, info, badge);
-        rows.appendChild(row);
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = name;
+      radio.className = "fl-keep-radio";
+      radio.checked = kept;
+      radio.setAttribute("aria-label", `Keep ${basename(p)}`);
+      radio.addEventListener("change", () => {
+        if (!radio.checked) return;
+        trashSet.clear();
+        for (const other of set.paths) if (other !== p) trashSet.add(other);
+        paint();
+        onChange();
       });
-    };
 
-    paint();
-    wrap.appendChild(rows);
-    return wrap;
-  }
+      const info = document.createElement("div");
+      info.className = "fl-dupe-info";
+      const fn = document.createElement("span");
+      fn.className = "fl-dupe-name";
+      fn.textContent = basename(p);
+      fn.title = p;
+      const dir = document.createElement("span");
+      dir.className = "fl-dupe-dir";
+      dir.textContent = shortPath(dirname(p));
+      dir.title = p;
+      info.append(fn, dir);
+
+      const badge = document.createElement("span");
+      badge.className = `fl-dupe-badge ${kept ? "is-keep" : "is-trash"}`;
+      badge.textContent = kept ? "Keep" : "Trash";
+
+      row.append(radio, info, badge);
+      rows.appendChild(row);
+    });
+  };
+
+  paint();
+  return tile;
 }
 
 /* ------------------------------------------------------------------ */
-/* Shared UI helpers (scoped to this screen)                           */
+/* Shared tiles / states                                               */
 /* ------------------------------------------------------------------ */
 
-function el(tag: string, className?: string): HTMLElement {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  return node;
-}
-
-function tag(label: string, kind: string): HTMLElement {
-  const t = el("span", `files-tag files-tag-${kind}`);
-  t.textContent = label;
-  return t;
-}
-
-function loadingBlock(label: string): HTMLElement {
-  const wrap = el("div", "files-loading");
-  wrap.appendChild(spinner());
-  const p = el("p", "text-dim");
-  p.textContent = label;
-  wrap.appendChild(p);
+function loadingTile(label: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "state fl-state";
+  wrap.appendChild(spinner({ size: 32 }));
+  wrap.appendChild(elText("p", label, "fl-state-text"));
   return wrap;
 }
 
-function emptyState(title: string, message: string): HTMLElement {
-  const wrap = el("div", "files-empty");
-  wrap.innerHTML = `
-    <div class="files-empty-glyph" aria-hidden="true">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20 6 9 17l-5-5" />
-      </svg>
-    </div>
-    <h4>${escapeHtml(title)}</h4>
-    <p class="text-dim">${escapeHtml(message)}</p>`;
+function emptyTile(title: string, message: string): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "state fl-state";
+  const glyph = document.createElement("div");
+  glyph.className = "fl-state-glyph";
+  glyph.appendChild(icon("check", { size: 30 }));
+  wrap.appendChild(glyph);
+  wrap.appendChild(elText("h3", title));
+  wrap.appendChild(elText("p", message, "fl-state-text"));
   return wrap;
 }
 
-function errorState(title: string, message: string, onRetry: () => void): HTMLElement {
-  const wrap = el("div", "files-empty files-error");
-  wrap.innerHTML = `
-    <div class="files-empty-glyph files-error-glyph" aria-hidden="true">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 8v5M12 16.5v.5" />
-      </svg>
-    </div>
-    <h4>${escapeHtml(title)}</h4>
-    <p class="text-dim">${escapeHtml(message)}</p>`;
+function errorTile(title: string, message: string, onRetry: () => void): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "state fl-state";
+  const glyph = document.createElement("div");
+  glyph.className = "fl-state-glyph is-danger";
+  glyph.innerHTML = `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></svg>`;
+  wrap.appendChild(glyph);
+  wrap.appendChild(elText("h3", title));
+  wrap.appendChild(elText("p", message, "fl-state-text"));
   wrap.appendChild(button({ label: "Try again", variant: "ghost", onClick: onRetry }));
   return wrap;
 }
@@ -689,31 +769,32 @@ interface ConfirmOptions {
   title: string;
   message: string;
   confirmLabel: string;
-  danger?: boolean;
 }
 
 function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
   return new Promise((resolve) => {
-    const overlay = el("div", "files-modal-overlay");
-    const dialog = el("div", "files-modal");
+    const overlay = document.createElement("div");
+    overlay.className = "fl-modal-overlay";
+
+    const dialog = document.createElement("div");
+    dialog.className = "glass-strong fl-modal";
     dialog.setAttribute("role", "alertdialog");
     dialog.setAttribute("aria-modal", "true");
-    dialog.setAttribute("aria-labelledby", "files-modal-title");
+    dialog.setAttribute("aria-labelledby", "fl-modal-title");
 
-    const h = el("h3", "files-modal-title");
-    h.id = "files-modal-title";
-    h.textContent = opts.title;
+    const h = elText("h3", opts.title, "fl-modal-title");
+    h.id = "fl-modal-title";
+    const p = elText("p", opts.message, "fl-modal-msg");
 
-    const p = el("p", "files-modal-msg text-dim");
-    p.textContent = opts.message;
-
-    const row = el("div", "files-modal-actions");
+    const row = document.createElement("div");
+    row.className = "fl-modal-actions";
     const cancel = button({ label: "Cancel", variant: "ghost", onClick: () => close(false) });
-    const confirm = button({
-      label: opts.confirmLabel,
-      variant: opts.danger ? "danger" : "primary",
-      onClick: () => close(true),
-    });
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "cta-pill fl-modal-confirm";
+    confirm.appendChild(icon("trash", { size: 16 }));
+    confirm.appendChild(elText("span", opts.confirmLabel));
+    confirm.addEventListener("click", () => close(true));
     row.append(cancel, confirm);
 
     dialog.append(h, p, row);
@@ -726,7 +807,6 @@ function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") close(false);
       if (e.key === "Tab") {
-        // Simple focus trap between the two buttons.
         e.preventDefault();
         (document.activeElement === confirm ? cancel : confirm).focus();
       }
@@ -739,10 +819,86 @@ function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
     function close(result: boolean): void {
       overlay.classList.remove("is-open");
       overlay.removeEventListener("keydown", onKey);
-      setTimeout(() => overlay.remove(), 180);
+      window.setTimeout(() => overlay.remove(), 180);
       resolve(result);
     }
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Small UI helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+function elText(tag: string, text: string, className?: string): HTMLElement {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+function tagPill(label: string, kind: string): HTMLElement {
+  const t = document.createElement("span");
+  t.className = `fl-tag ${kind}`;
+  t.textContent = label;
+  return t;
+}
+
+function setPillBusy(btn: HTMLButtonElement, label: string): void {
+  const span = btn.querySelector("span");
+  if (span) {
+    btn.dataset.prevLabel = span.textContent ?? "";
+    span.textContent = label;
+  }
+  btn.disabled = true;
+  btn.setAttribute("aria-disabled", "true");
+}
+
+function clearPillBusy(btn: HTMLButtonElement): void {
+  const span = btn.querySelector("span");
+  if (span && btn.dataset.prevLabel != null) span.textContent = btn.dataset.prevLabel;
+  delete btn.dataset.prevLabel;
+  btn.disabled = false;
+  btn.setAttribute("aria-disabled", "false");
+}
+
+// Stagger the children of a freshly-painted grid into view (~40ms each).
+function staggerIn(container: HTMLElement): void {
+  if (prefersReducedMotion()) return;
+  const kids = Array.from(container.children) as HTMLElement[];
+  kids.forEach((kid, i) => {
+    kid.style.animation = "none";
+    kid.style.opacity = "0";
+    kid.style.transform = "translateY(10px)";
+    window.setTimeout(() => {
+      kid.style.animation = "fade-up var(--t-slow) var(--ease) both";
+      kid.style.opacity = "";
+      kid.style.transform = "";
+    }, i * 40);
+  });
+}
+
+// Gentle pointer parallax on the hero art (disabled for reduced motion).
+function attachParallax(art: HTMLElement): void {
+  if (prefersReducedMotion()) return;
+  const host = art.closest(".fl-hero") as HTMLElement | null;
+  if (!host) return;
+  const onMove = (e: PointerEvent): void => {
+    const rect = host.getBoundingClientRect();
+    const dx = (e.clientX - rect.left - rect.width / 2) / rect.width;
+    const dy = (e.clientY - rect.top - rect.height / 2) / rect.height;
+    art.style.setProperty("--px", `${(dx * 8).toFixed(2)}px`);
+    art.style.setProperty("--py", `${(dy * 8).toFixed(2)}px`);
+  };
+  const reset = (): void => {
+    art.style.setProperty("--px", "0px");
+    art.style.setProperty("--py", "0px");
+  };
+  host.addEventListener("pointermove", onMove);
+  host.addEventListener("pointerleave", reset);
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 /* ------------------------------------------------------------------ */
@@ -782,214 +938,298 @@ function errMsg(err: unknown): string {
   }
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function hash(s: string): string {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0).toString(36);
-}
-
 /* ------------------------------------------------------------------ */
 /* Scoped styles (injected once)                                       */
 /* ------------------------------------------------------------------ */
 
 function injectStyles(): void {
-  if (document.getElementById("files-screen-styles")) return;
+  if (document.getElementById("fl-styles")) return;
   const style = document.createElement("style");
-  style.id = "files-screen-styles";
+  style.id = "fl-styles";
   style.textContent = CSS;
   document.head.appendChild(style);
 }
 
 const CSS = `
-.screen-files {
+.fl { gap: 0; }
+
+/* ---- hero (idle) ---- */
+.fl-hero {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  max-width: 980px;
+  align-items: center;
+  text-align: center;
+  max-width: 880px;
   margin: 0 auto;
-  animation: files-rise var(--speed-slow, 240ms) var(--ease, ease) both;
+  padding: var(--s-5) var(--s-4) var(--s-6);
+  animation: fade-up var(--t-slow) var(--ease) both;
 }
-@keyframes files-rise {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+.fl-hero.is-leaving {
+  animation: fade-out var(--t-base) var(--ease) both;
 }
-.files-head { display: flex; flex-direction: column; gap: 4px; }
-.files-title { margin: 0; font-size: 24px; letter-spacing: -0.01em; }
-.files-sub { margin: 0; font-size: 14px; }
-
-.files-card { padding: 20px; }
-.card-head {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 16px; margin-bottom: 14px;
+@keyframes fade-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-8px); }
 }
-.card-head .card-title { margin: 0; font-size: 16px; }
-.card-hint { margin: 4px 0 0; font-size: 13px; }
-.card-actions { display: flex; gap: 10px; flex-shrink: 0; }
-.card-actions .btn { padding: 8px 14px; font-size: 13px; }
+.fl-hero .hero-art {
+  transform: translate(var(--px, 0px), var(--py, 0px));
+  transition: transform 120ms var(--ease-soft);
+}
+.fl-cta-pedestal {
+  margin-top: var(--s-6);
+  display: grid;
+  place-items: center;
+}
+.fl-cta { --size: 132px; }
+.fl-hint {
+  margin-top: var(--s-3);
+  font-size: 13px;
+  color: var(--text-faint);
+}
 
-/* groups */
-.files-group { margin-top: 6px; }
-.files-group + .files-group { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
-.files-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.files-group-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
-.files-group-name { font-size: 14px; font-weight: 600; }
-.files-group-count { font-size: 13px; font-variant-numeric: tabular-nums; }
-.files-group-hint { margin: 4px 0 0 26px; font-size: 12px; }
+/* ---- results ---- */
+.fl-results {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--s-5) 0 var(--s-6);
+  width: 100%;
+  opacity: 0;
+  transition: opacity var(--t-slow) var(--ease);
+}
+.fl-results.is-in { opacity: 1; }
+.fl-head-title { font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+.fl-head-sub { min-height: 18px; }
+.fl-clean-pill[disabled],
+.fl-dupes-clean[disabled],
+.fl-dupes-scan[disabled] {
+  cursor: not-allowed;
+  filter: saturate(0.5) brightness(0.8);
+  opacity: 0.85;
+}
 
-.files-sort { display: flex; gap: 4px; }
-.files-sort-chip {
-  border: 1px solid transparent; background: transparent; color: var(--text-dim);
-  border-radius: 999px; padding: 4px 11px; font-size: 12px; font-weight: 600;
+/* group tile */
+.fl-grid { grid-template-columns: 1fr; gap: var(--s-3); margin-bottom: var(--s-4); }
+.fl-tile { padding: 20px; }
+.fl-tile-top {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.fl-tile-chip {
+  flex: none;
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border-radius: 13px;
+  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-2) 30%, transparent);
+}
+.fl-tile-heading { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.fl-tile-label { font-size: 15px; font-weight: 600; color: var(--text); }
+.fl-tile-meta { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.fl-tile-all { flex: none; display: grid; place-items: center; cursor: pointer; }
+.fl-tile-hint { margin: 12px 0 0; font-size: 12.5px; color: var(--text-faint); }
+
+.fl-sort { display: flex; gap: 4px; margin-top: 14px; }
+.fl-sort-chip {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
   display: inline-flex; align-items: center; gap: 4px;
-  transition: background var(--speed,180ms) var(--ease,ease), color var(--speed,180ms) var(--ease,ease);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
-.files-sort-chip:hover { color: var(--text); background: var(--surface-2); }
-.files-sort-chip.is-active { color: var(--text); background: var(--accent-soft, rgba(124,92,255,.16)); }
-.files-sort-arrow { font-size: 11px; opacity: .9; }
+.fl-sort-chip:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+.fl-sort-chip.is-active { color: #fff; background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.fl-sort-arrow { font-size: 11px; opacity: 0.9; }
 
-/* checkbox + radio */
-.ckbx, .dupe-keep-radio {
+.fl-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.fl-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px;
+  border-radius: 14px;
+  transition: background var(--t-fast) var(--ease);
+}
+.fl-row + .fl-row { margin-top: 2px; }
+.fl-row:hover { background: rgba(255,255,255,0.05); }
+.fl-row.is-selected { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.fl-row-check { margin: 0; }
+.fl-row-main { display: grid; gap: 3px; min-width: 0; }
+.fl-row-name { font-size: 14px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-row-path { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-row-bar { height: 5px; max-width: 340px; margin-top: 4px; }
+.fl-row-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.fl-row-size { font-size: 13px; font-weight: 600; color: var(--text); }
+.fl-row-tags { display: flex; gap: 5px; }
+.fl-tag {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 6px;
+}
+.fl-tag.is-warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, transparent); }
+.fl-tag.is-danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 18%, transparent); }
+
+/* ---- duplicates panel ---- */
+.fl-dupes { padding: 22px; }
+.fl-dupes-head { display: flex; align-items: center; gap: 13px; }
+.fl-dupes-chip {
+  flex: none;
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border-radius: 13px;
+  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-2) 30%, transparent);
+}
+.fl-dupes-heading { min-width: 0; }
+.fl-dupes-title { font-size: 16px; font-weight: 600; }
+.fl-dupes-hint { margin: 3px 0 0; font-size: 13px; color: var(--text-dim); }
+
+.fl-picker { display: flex; gap: 10px; margin-top: 18px; }
+.fl-input-wrap {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 9px;
+  padding: 0 14px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
+.fl-input-wrap:focus-within {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.fl-input-wrap.is-invalid {
+  border-color: var(--danger);
+  animation: fl-shake 320ms var(--ease);
+}
+@keyframes fl-shake {
+  10%,90% { transform: translateX(-1px); }
+  30%,70% { transform: translateX(2px); }
+  50% { transform: translateX(-2px); }
+}
+.fl-input-icon { color: var(--text-faint); flex: none; }
+.fl-input {
+  flex: 1; min-width: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 10px 0;
+}
+.fl-input::placeholder { color: var(--text-faint); }
+.fl-picker .btn { white-space: nowrap; }
+.fl-dupes-scan { height: 44px; padding: 0 20px; }
+
+.fl-dupes-out { margin-top: 20px; }
+.fl-dupes-summary { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.fl-dupes-count { font-size: 14px; font-weight: 600; color: var(--text); }
+.fl-dupes-reclaim { font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.fl-dupes-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.fl-dupe { padding: 16px; }
+.fl-dupe-top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.fl-dupe-count { font-size: 13px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.fl-dupe-reclaim { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.fl-dupe-rows { display: flex; flex-direction: column; margin-top: 6px; }
+.fl-dupe-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 4px;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+  border-radius: 10px;
+}
+.fl-dupe-row:hover { background: rgba(255,255,255,0.05); }
+.fl-dupe-info { display: grid; gap: 1px; min-width: 0; }
+.fl-dupe-name { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-dupe-dir { font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-dupe-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 7px;
+}
+.fl-dupe-badge.is-keep { color: var(--ok); background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.fl-dupe-badge.is-trash { color: var(--text-dim); background: rgba(255,255,255,0.08); }
+
+.fl-keep-radio {
   appearance: none; -webkit-appearance: none; margin: 0;
-  width: 18px; height: 18px; flex-shrink: 0;
-  border: 1.5px solid var(--text-faint); background: transparent; cursor: pointer;
-  transition: border-color var(--speed,180ms) var(--ease,ease), background var(--speed,180ms) var(--ease,ease);
+  width: 19px; height: 19px; flex: none;
+  border: 1.5px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  border-radius: 50%;
+  cursor: pointer;
   display: inline-grid; place-content: center;
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
 }
-.ckbx { border-radius: 6px; }
-.dupe-keep-radio { border-radius: 50%; }
-.ckbx:hover, .dupe-keep-radio:hover { border-color: var(--accent); }
-.ckbx:checked, .dupe-keep-radio:checked {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent;
+.fl-keep-radio:hover { border-color: var(--accent-2); }
+.fl-keep-radio:checked {
+  background: linear-gradient(150deg, var(--accent), var(--accent-2));
+  border-color: transparent;
 }
-.ckbx:checked::after {
-  content: ""; width: 10px; height: 6px; margin-top: -2px;
-  border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg);
+.fl-keep-radio:checked::after {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff;
 }
-.dupe-keep-radio:checked::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
-.ckbx:indeterminate { background: var(--surface-2); border-color: var(--accent); }
-.ckbx:indeterminate::after { content: ""; width: 9px; height: 2px; background: var(--accent); }
-.ckbx:focus-visible, .dupe-keep-radio:focus-visible,
-.files-sort-chip:focus-visible, .dupes-input:focus-visible {
-  outline: 2px solid var(--accent-ring, rgba(124,92,255,.45)); outline-offset: 2px;
-}
+.fl-keep-radio:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 
-/* rows */
-.files-list { list-style: none; margin: 8px 0 0; padding: 0; }
-.files-row {
-  display: grid; grid-template-columns: auto 1fr auto; align-items: center;
-  gap: 14px; padding: 10px 10px; border-radius: var(--radius, 11px);
-  transition: background var(--speed,180ms) var(--ease,ease);
-}
-.files-row:hover { background: var(--surface-2); }
-.files-row.is-selected { background: var(--accent-soft, rgba(124,92,255,.16)); }
-.files-row-main { display: grid; gap: 2px; min-width: 0; cursor: pointer; }
-.files-row-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.files-row-path { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.files-row-bar { height: 4px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin-top: 5px; max-width: 320px; }
-.files-row-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width var(--speed-slow,240ms) var(--ease,ease); }
-.files-row-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.files-row-size { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.files-row-tags { display: flex; gap: 5px; }
-.files-tag { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; }
-.files-tag-stale { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
-.files-tag-risky { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.fl-dupes-cleanbar { display: flex; justify-content: flex-end; margin-top: 18px; }
 
-/* duplicates picker */
-.dupes-picker { display: flex; gap: 10px; margin-bottom: 6px; }
-.dupes-input {
-  flex: 1; min-width: 0; font-family: var(--mono, monospace); font-size: 13px;
-  color: var(--text); background: var(--bg-elev); border: 1px solid var(--border);
-  border-radius: var(--radius, 11px); padding: 9px 13px; outline: none;
-  transition: border-color var(--speed,180ms) var(--ease,ease), box-shadow var(--speed,180ms) var(--ease,ease);
+/* ---- states ---- */
+.fl-state { min-height: 200px; padding: 36px 20px; }
+.fl-state-text { font-size: 13.5px; color: var(--text-dim); max-width: 380px; }
+.fl-state-glyph {
+  width: 60px; height: 60px;
+  display: grid; place-items: center;
+  border-radius: 18px;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
 }
-.dupes-input::placeholder { color: var(--text-faint); }
-.dupes-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft, rgba(124,92,255,.16)); }
-.dupes-input.is-invalid { border-color: var(--danger); animation: files-shake 320ms var(--ease,ease); }
-@keyframes files-shake {
-  10%,90% { transform: translateX(-1px); } 30%,70% { transform: translateX(2px); } 50% { transform: translateX(-2px); }
-}
-.dupes-picker .btn { white-space: nowrap; }
+.fl-state-glyph.is-danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }
 
-.dupes-results { margin-top: 8px; }
-.dupes-summary { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
-.dupes-summary-count { font-size: 14px; font-weight: 600; }
-.dupes-summary-reclaim { font-size: 13px; }
-
-.dupes-list { display: flex; flex-direction: column; gap: 12px; }
-.dupe-set {
-  border: 1px solid var(--border); border-radius: var(--radius, 11px);
-  background: var(--bg-elev); overflow: hidden;
-  animation: files-rise var(--speed,180ms) var(--ease,ease) both;
-}
-.dupe-set-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
-.dupe-set-title { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.dupe-set-reclaim { font-size: 12px; }
-.dupe-set-rows { display: flex; flex-direction: column; }
-.dupe-row {
-  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
-  padding: 9px 14px; cursor: pointer;
-  transition: background var(--speed,180ms) var(--ease,ease);
-}
-.dupe-row:hover { background: var(--surface-2); }
-.dupe-row + .dupe-row { border-top: 1px solid var(--border); }
-.dupe-row-info { display: grid; gap: 1px; min-width: 0; }
-.dupe-row-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dupe-row-dir { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dupe-row-badge { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; }
-.dupe-row-badge.is-keep { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
-.dupe-row-badge.is-trash { color: var(--text-dim); background: var(--surface-2); }
-
-.dupes-cleanbar { display: flex; justify-content: flex-end; margin-top: 14px; }
-
-/* loading / empty / error */
-.files-loading { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 40px 0; }
-.files-loading p { margin: 0; font-size: 13px; }
-.files-empty {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 40px 20px; text-align: center;
-  animation: files-rise var(--speed,180ms) var(--ease,ease) both;
-}
-.files-empty h4 { margin: 4px 0 0; font-size: 15px; }
-.files-empty p { margin: 0; font-size: 13px; max-width: 360px; }
-.files-empty-glyph {
-  display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%;
-  color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent);
-}
-.files-error-glyph { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
-.files-error .btn { margin-top: 8px; }
-
-/* confirm modal */
-.files-modal-overlay {
+/* ---- confirm modal ---- */
+.fl-modal-overlay {
   position: fixed; inset: 0; z-index: 1000;
   display: grid; place-items: center; padding: 24px;
-  background: rgba(0,0,0,.5); backdrop-filter: blur(6px);
-  opacity: 0; transition: opacity var(--speed,180ms) var(--ease,ease);
+  background: rgba(0,0,0,0.5);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity var(--t-base) var(--ease);
 }
-.files-modal-overlay.is-open { opacity: 1; }
-.files-modal {
-  width: min(420px, 100%); background: var(--bg-elev);
-  border: 1px solid var(--border); border-radius: var(--radius-lg, 20px);
-  box-shadow: var(--shadow-lg); padding: 22px;
-  transform: scale(.96) translateY(6px); transition: transform var(--speed,180ms) var(--ease,ease);
+.fl-modal-overlay.is-open { opacity: 1; }
+.fl-modal {
+  width: min(420px, 100%);
+  padding: 24px;
+  transform: scale(0.96) translateY(6px);
+  transition: transform var(--t-base) var(--ease);
 }
-.files-modal-overlay.is-open .files-modal { transform: scale(1) translateY(0); }
-.files-modal-title { margin: 0 0 8px; font-size: 17px; }
-.files-modal-msg { margin: 0 0 18px; font-size: 14px; line-height: 1.45; }
-.files-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.fl-modal-overlay.is-open .fl-modal { transform: scale(1) translateY(0); }
+.fl-modal-title { position: relative; margin: 0 0 8px; font-size: 18px; }
+.fl-modal-msg { position: relative; margin: 0 0 20px; font-size: 14px; line-height: 1.5; color: var(--text-dim); }
+.fl-modal-actions { position: relative; display: flex; justify-content: flex-end; gap: 10px; }
+.fl-modal-confirm {
+  height: 44px; padding: 0 20px;
+  background:
+    radial-gradient(120% 120% at 30% 22%, rgba(255,255,255,0.3), transparent 55%),
+    linear-gradient(150deg, var(--danger), #ff8a95);
+  box-shadow: 0 8px 24px rgba(255, 93, 108, 0.32), 0 0 0 1px rgba(255,255,255,0.18) inset;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .screen-files, .files-empty, .dupe-set, .files-row-bar-fill,
-  .files-modal-overlay, .files-modal { animation: none !important; transition: none !important; }
+  .fl-hero, .fl-hero.is-leaving, .fl-results,
+  .fl-hero .hero-art { animation: none !important; transition: none !important; }
 }
 `;

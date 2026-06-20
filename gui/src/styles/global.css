@@ -1,8 +1,10 @@
-/* Sweep global stylesheet — reset, base typography, scrollbars, and the
-   shared component classes that screens and the components agent rely on.
-   Class names are intentionally generic (.card, .btn, .list, .row, .ring,
-   .chip, .toast, .spinner, .sidebar, .nav-item, .titlebar, .content …).
-   The goal is the feel of a polished native macOS app, not a web page. */
+/* Sweep global stylesheet — reset, base typography, the shell frame, the
+   full-bleed world background, and the shared component classes screens rely
+   on (.btn, .list, .row, .ring, .sizebar, .toast, .spinner, .check …).
+
+   The look is a native macOS app: each screen is its own colour world painted
+   behind liquid glass. tokens.css defines the vars; glass.css the material;
+   this file wires the frame and motion. */
 
 /* ============================================================
    1. Reset
@@ -29,20 +31,10 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--text);
-  background-color: var(--bg);
-  /* Ambient depth: two soft accent glows bleeding from the corners over a
-     deep near-black field. Fixed so it never scrolls with content. */
-  background-image: radial-gradient(
-      900px 600px at 14% -8%,
-      rgba(124, 92, 255, 0.16),
-      transparent 60%
-    ),
-    radial-gradient(
-      820px 560px at 108% 8%,
-      rgba(33, 212, 253, 0.12),
-      transparent 58%
-    );
-  background-attachment: fixed;
+  /* Transparent so the window's native vibrancy shows behind the (transparent)
+     sidebar. The content column paints its own opaque world, so only the menu
+     reads as Liquid Glass. */
+  background-color: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -51,18 +43,18 @@ body {
   user-select: none;
 }
 
+/* The window fills the screen (no floating margin) — only the menu floats.
+   Rounded corners keep the native macOS window shape. */
 #app {
   height: 100vh;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 img,
 svg {
   display: block;
   max-width: 100%;
-}
-
-svg {
-  fill: none;
 }
 
 button,
@@ -98,15 +90,12 @@ h4 {
 h1 {
   font-size: 28px;
 }
-
 h2 {
   font-size: 21px;
 }
-
 h3 {
   font-size: 16px;
 }
-
 h4 {
   font-size: 13px;
   font-weight: 600;
@@ -131,11 +120,9 @@ small {
 .text-dim {
   color: var(--text-dim);
 }
-
 .text-faint {
   color: var(--text-faint);
 }
-
 .tnum {
   font-variant-numeric: tabular-nums;
 }
@@ -145,7 +132,7 @@ small {
    ============================================================ */
 
 ::selection {
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--text);
 }
 
@@ -154,13 +141,13 @@ small {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent-ring);
+  outline: 2px solid var(--accent-2);
   outline-offset: 2px;
-  border-radius: var(--radius);
+  border-radius: 8px;
 }
 
 /* ============================================================
-   4. Scrollbars — slim, ghostly, native-feeling
+   4. Scrollbars — slim, ghostly
    ============================================================ */
 
 * {
@@ -172,184 +159,133 @@ small {
   width: 11px;
   height: 11px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background-clip: padding-box;
   background-color: rgba(255, 255, 255, 0.14);
   border: 3px solid transparent;
   border-radius: 999px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.26);
 }
-
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
 /* ============================================================
-   5. Shell — sidebar + titlebar + content host
+   5. Shell — sidebar + content + world background
    ============================================================ */
 
 .shell {
+  position: relative;
   display: grid;
   grid-template-columns: 244px 1fr;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
-.sidebar {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 12px 12px 16px;
-  background: linear-gradient(
-    180deg,
-    rgba(13, 15, 21, 0.92),
-    rgba(7, 8, 11, 0.92)
-  );
-  border-right: 1px solid var(--border);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  overflow-y: auto;
-}
-
+/* Empty top spacer reserving room for the macOS traffic lights. */
 .sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 18px 12px 8px;
+  height: 44px;
+  flex: 0 0 auto;
   /* macOS traffic-light region drag */
   -webkit-app-region: drag;
+}
+
+.brand-logo {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+}
+.brand-logo svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .brand-mark {
   font-size: 19px;
   font-weight: 800;
   letter-spacing: -0.02em;
-  background: var(--accent-grad);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-.sidebar-section {
-  padding: 4px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
-.sidebar-foot {
-  margin-top: auto;
-  padding: 8px 12px;
-  font-size: 12px;
-  color: var(--text-faint);
+.nav-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: inherit;
+  transition: color var(--t-fast) var(--ease);
 }
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border: none;
-  color: var(--text-dim);
-  padding: 9px 12px;
-  border-radius: var(--radius);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--speed) var(--ease),
-    color var(--speed) var(--ease), transform var(--speed) var(--ease);
-}
-
-.nav-item svg {
-  width: 18px;
-  height: 18px;
-  flex: none;
+.nav-icon svg {
+  display: block;
   stroke: currentColor;
-  opacity: 0.85;
+}
+.nav-label {
+  flex: 1 1 auto;
+  text-align: left;
 }
 
-.nav-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text);
+.nav-item.is-active .nav-icon {
+  color: var(--accent-2);
 }
 
-.nav-item:active {
-  transform: scale(0.985);
-}
-
-.nav-item.is-active {
-  color: var(--text);
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px rgba(124, 92, 255, 0.28);
-}
-
-.nav-item.is-active svg {
-  opacity: 1;
-  stroke: var(--accent-2);
-}
-
+/* content region — paints the world gradient behind the routed screen */
 .content {
   position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+  /* transparent: the window-wide .world-bg shows through, so the coloured
+     world fills behind both the menu and the content. */
+  background-color: transparent;
+}
+
+/* full-bleed world layer; cross-fades on theme change via .world-bg */
+.world-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--world-grad);
+  transition: opacity var(--t-slow) var(--ease-soft);
+  pointer-events: none;
+}
+
+.world-bg.is-fading {
+  opacity: 0;
 }
 
 .titlebar {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 52px;
+  height: 44px;
   flex: none;
   padding: 0 28px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  border-bottom: 1px solid var(--border);
-  background: rgba(13, 15, 21, 0.55);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
   -webkit-app-region: drag;
 }
 
-.titlebar .titlebar-sub {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-dim);
-}
-
-.titlebar .titlebar-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 10px;
-  -webkit-app-region: no-drag;
-}
-
 .content-host {
+  position: relative;
+  z-index: 1;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 28px;
+  padding: 0 28px 32px;
 }
 
 /* ============================================================
@@ -360,7 +296,7 @@ small {
   display: flex;
   flex-direction: column;
   gap: var(--gap);
-  animation: fade-up var(--speed-slow) var(--ease) both;
+  animation: fade-up var(--t-slow) var(--ease) both;
 }
 
 .stack {
@@ -383,12 +319,6 @@ small {
   gap: 12px;
 }
 
-.grid {
-  display: grid;
-  gap: var(--gap);
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-}
-
 .spacer {
   flex: 1;
 }
@@ -402,8 +332,34 @@ small {
   margin-bottom: 4px;
 }
 
-/* empty / loading states */
+/* results header row */
+.results-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: var(--s-4);
+}
 
+.results-head h2 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.results-head .results-sub {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.results-head .results-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* empty / loading states */
 .state {
   display: flex;
   flex-direction: column;
@@ -413,102 +369,15 @@ small {
   min-height: 240px;
   text-align: center;
   color: var(--text-dim);
-  animation: fade-up var(--speed-slow) var(--ease) both;
+  animation: fade-up var(--t-slow) var(--ease) both;
 }
 
 .state h3 {
   color: var(--text);
 }
 
-.state .state-icon {
-  width: 44px;
-  height: 44px;
-  opacity: 0.6;
-  stroke: var(--text-dim);
-}
-
-.placeholder {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-start;
-}
-
 /* ============================================================
-   7. Card
-   ============================================================ */
-
-.card {
-  position: relative;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--gap);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
-  transition: border-color var(--speed) var(--ease),
-    transform var(--speed) var(--ease), box-shadow var(--speed) var(--ease);
-}
-
-/* subtle top sheen — the glassy highlight that sells the surface */
-.card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.1),
-    rgba(255, 255, 255, 0)
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-.card.is-hoverable {
-  cursor: pointer;
-}
-
-.card.is-hoverable:hover {
-  transform: translateY(-2px);
-  border-color: rgba(255, 255, 255, 0.16);
-  box-shadow: var(--shadow-lg);
-}
-
-.card.is-selected {
-  border-color: var(--accent-ring);
-  box-shadow: 0 0 0 1px var(--accent-ring), var(--shadow);
-}
-
-.card-title {
-  margin: 0 0 12px;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.card-pad {
-  padding: var(--gap);
-}
-
-/* hero card — for dashboard / smart-scan focal area */
-.card-hero {
-  padding: 28px;
-  border-radius: var(--radius-lg);
-  background: radial-gradient(
-      120% 140% at 0% 0%,
-      rgba(124, 92, 255, 0.14),
-      transparent 55%
-    ),
-    var(--surface);
-}
-
-/* ============================================================
-   8. Buttons
+   7. Buttons
    ============================================================ */
 
 .btn {
@@ -516,19 +385,24 @@ small {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
   padding: 9px 16px;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
-  background: var(--surface-2);
+  background: rgba(255, 255, 255, 0.08);
   cursor: pointer;
   white-space: nowrap;
-  transition: transform var(--speed) var(--ease),
-    background var(--speed) var(--ease), border-color var(--speed) var(--ease),
-    box-shadow var(--speed) var(--ease), filter var(--speed) var(--ease),
-    opacity var(--speed) var(--ease);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+  transition:
+    transform var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease),
+    filter var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease);
 }
 
 .btn svg {
@@ -538,8 +412,8 @@ small {
 }
 
 .btn:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .btn:active {
@@ -556,26 +430,25 @@ small {
 .btn-primary {
   border-color: transparent;
   color: #fff;
-  background: var(--accent-grad);
-  box-shadow: 0 6px 20px rgba(124, 92, 255, 0.35);
+  background: linear-gradient(150deg, var(--accent), var(--accent-2));
+  box-shadow: 0 6px 20px var(--glow);
 }
 
 .btn-primary:hover {
   border-color: transparent;
-  background: var(--accent-grad);
   filter: brightness(1.08);
-  box-shadow: 0 8px 26px rgba(124, 92, 255, 0.45);
+  box-shadow: 0 8px 26px var(--glow);
 }
 
 .btn-ghost {
   background: transparent;
-  border-color: var(--border);
+  border-color: rgba(255, 255, 255, 0.16);
   color: var(--text-dim);
 }
 
 .btn-ghost:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .btn-danger {
@@ -587,14 +460,13 @@ small {
 
 .btn-danger:hover {
   border-color: transparent;
-  background: var(--danger);
   filter: brightness(1.08);
 }
 
 .btn-lg {
   padding: 13px 26px;
   font-size: 15px;
-  border-radius: var(--radius-lg);
+  border-radius: 16px;
 }
 
 .btn-sm {
@@ -609,19 +481,19 @@ small {
 }
 
 /* ============================================================
-   9. List + rows
+   8. List + rows
    ============================================================ */
 
 .list {
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius);
+  border-radius: var(--radius-tile);
   overflow: hidden;
 }
 
 .list .row:not(:last-child),
 .list .list-item:not(:last-child) {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .row,
@@ -630,7 +502,7 @@ small {
   align-items: center;
   gap: 12px;
   padding: 11px 14px;
-  transition: background var(--speed) var(--ease);
+  transition: background var(--t-fast) var(--ease);
 }
 
 .row.is-interactive,
@@ -640,12 +512,12 @@ small {
 
 .row.is-interactive:hover,
 .list-item.is-interactive:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .row.is-selected,
 .list-item.is-selected {
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .row-main {
@@ -680,28 +552,30 @@ small {
   white-space: nowrap;
 }
 
-/* checkbox: a custom, accent-filled control for checkable lists */
+/* checkbox */
 .check {
   appearance: none;
   -webkit-appearance: none;
   width: 19px;
   height: 19px;
   flex: none;
-  border: 1.5px solid var(--border);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
   border-radius: 6px;
-  background: var(--surface-2);
+  background: rgba(255, 255, 255, 0.08);
   cursor: pointer;
   position: relative;
-  transition: background var(--speed) var(--ease),
-    border-color var(--speed) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
 }
 
 .check:hover {
-  border-color: var(--accent-ring);
+  border-color: var(--accent-2);
 }
 
-.check:checked {
-  background: var(--accent-grad);
+.check:checked,
+.check:indeterminate {
+  background: linear-gradient(150deg, var(--accent), var(--accent-2));
   border-color: transparent;
 }
 
@@ -717,11 +591,6 @@ small {
   transform: rotate(45deg);
 }
 
-.check:indeterminate {
-  background: var(--accent-grad);
-  border-color: transparent;
-}
-
 .check:indeterminate::after {
   content: "";
   position: absolute;
@@ -734,14 +603,14 @@ small {
 }
 
 /* ============================================================
-   10. Sizebar — proportional usage meter
+   9. Sizebar — proportional usage meter
    ============================================================ */
 
 .sizebar {
   height: 7px;
   width: 100%;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
 }
 
@@ -749,28 +618,22 @@ small {
   height: 100%;
   width: 0;
   border-radius: 999px;
-  background: var(--accent-grad);
-  transition: width var(--speed-slow) var(--ease);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 700ms var(--ease);
 }
 
 .sizebar-fill.is-ok {
   background: linear-gradient(90deg, var(--ok), #6ee7b7);
 }
-
 .sizebar-fill.is-warn {
   background: linear-gradient(90deg, var(--warn), #fcd34d);
 }
-
 .sizebar-fill.is-danger {
   background: linear-gradient(90deg, var(--danger), #ff8a95);
 }
 
-.sizebar-fill.is-personal {
-  background: linear-gradient(90deg, var(--personal), #ffb088);
-}
-
 /* ============================================================
-   11. Ring — big animated progress dial (dashboard / smart scan)
+   10. Ring — big animated progress dial (dashboard)
    ============================================================ */
 
 .ring {
@@ -792,15 +655,15 @@ small {
 
 .ring .ring-track {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.07);
+  stroke: rgba(255, 255, 255, 0.1);
 }
 
 .ring .ring-value {
   fill: none;
   stroke: url(#ringGradient);
   stroke-linecap: round;
-  transition: stroke-dashoffset var(--speed-slow) var(--ease);
-  filter: drop-shadow(0 0 8px rgba(124, 92, 255, 0.5));
+  transition: stroke-dashoffset 900ms cubic-bezier(0.22, 1, 0.36, 1);
+  filter: drop-shadow(0 0 8px var(--glow));
 }
 
 .ring-center {
@@ -824,66 +687,11 @@ small {
 }
 
 .ring.is-scanning .ring-value {
-  animation: ring-pulse 1.6s var(--ease) infinite;
+  animation: ring-sweep 1.6s var(--ease) infinite;
 }
 
 /* ============================================================
-   12. Chip / badge / pill
-   ============================================================ */
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  border-radius: 999px;
-  color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.chip svg {
-  width: 13px;
-  height: 13px;
-  stroke: currentColor;
-}
-
-.chip.is-ok {
-  color: var(--ok);
-  background: rgba(47, 208, 127, 0.12);
-  border-color: rgba(47, 208, 127, 0.3);
-}
-
-.chip.is-warn {
-  color: var(--warn);
-  background: rgba(255, 194, 75, 0.12);
-  border-color: rgba(255, 194, 75, 0.3);
-}
-
-.chip.is-danger {
-  color: var(--danger);
-  background: rgba(255, 93, 108, 0.12);
-  border-color: rgba(255, 93, 108, 0.3);
-}
-
-.chip.is-personal {
-  color: var(--personal);
-  background: rgba(255, 138, 91, 0.12);
-  border-color: rgba(255, 138, 91, 0.3);
-}
-
-.chip.is-accent {
-  color: var(--accent-2);
-  background: var(--accent-soft);
-  border-color: rgba(124, 92, 255, 0.32);
-}
-
-/* ============================================================
-   13. Toast
+   11. Toast
    ============================================================ */
 
 .toast-host {
@@ -905,18 +713,20 @@ small {
   min-width: 260px;
   max-width: 380px;
   padding: 13px 16px;
-  border-radius: var(--radius);
+  border-radius: 14px;
   color: var(--text);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  animation: toast-in var(--speed-slow) var(--ease) both;
+  background: rgba(20, 22, 32, 0.72);
+  border: 1px solid var(--hairline);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.12) inset,
+    0 18px 48px rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  backdrop-filter: blur(28px) saturate(1.6);
+  animation: toast-in var(--t-slow) var(--ease) both;
 }
 
 .toast.is-leaving {
-  animation: toast-out var(--speed) var(--ease) both;
+  animation: toast-out var(--t-fast) var(--ease) both;
 }
 
 .toast svg {
@@ -943,14 +753,12 @@ small {
 .toast.is-ok svg {
   color: var(--ok);
 }
-
 .toast.is-warn {
   border-left: 3px solid var(--warn);
 }
 .toast.is-warn svg {
   color: var(--warn);
 }
-
 .toast.is-danger {
   border-left: 3px solid var(--danger);
 }
@@ -959,7 +767,7 @@ small {
 }
 
 /* ============================================================
-   14. Spinner
+   12. Spinner
    ============================================================ */
 
 .spinner {
@@ -967,7 +775,7 @@ small {
   height: 22px;
   flex: none;
   border-radius: 50%;
-  border: 2.5px solid rgba(255, 255, 255, 0.12);
+  border: 2.5px solid rgba(255, 255, 255, 0.14);
   border-top-color: var(--accent-2);
   animation: spin 720ms linear infinite;
 }
@@ -985,7 +793,7 @@ small {
 }
 
 /* ============================================================
-   15. Keyframes + reduced motion
+   13. Keyframes + reduced motion
    ============================================================ */
 
 @keyframes spin {
@@ -994,7 +802,7 @@ small {
   }
 }
 
-@keyframes ring-pulse {
+@keyframes ring-sweep {
   0%,
   100% {
     opacity: 1;
@@ -1004,14 +812,95 @@ small {
   }
 }
 
+@keyframes cta-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+      0 10px 30px var(--glow),
+      0 2px 6px rgba(0, 0, 0, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.22) inset,
+      0 14px 44px var(--glow),
+      0 2px 6px rgba(0, 0, 0, 0.35);
+  }
+}
+
+@keyframes hero-float {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(-10px) scale(1.02);
+  }
+}
+
+@keyframes pulse-glow {
+  from {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0.7;
+    transform: scale(1.08);
+  }
+}
+
+/* alias kept for the hero halo */
+@keyframes halo-breathe {
+  from {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0.7;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes ring-sweep-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes fade-up {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes world-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes float {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(-10px) scale(1.02);
   }
 }
 

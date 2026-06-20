@@ -1,5 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M7 3.5h6l4 4v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"/>
-  <path d="M13 3.5v4h4" opacity="0.5"/>
-  <path d="M8.5 13h7M8.5 16.5h4.5" opacity="0.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M9 5.5h5l3.5 3.5v9a1.8 1.8 0 0 1-1.8 1.8H9a1.8 1.8 0 0 1-1.8-1.8V7.3A1.8 1.8 0 0 1 9 5.5z" fill="currentColor" fill-opacity="0.1" stroke="none" opacity="0.6"/>
+  <path d="M9 5.5h5l3.5 3.5v9a1.8 1.8 0 0 1-1.8 1.8H9a1.8 1.8 0 0 1-1.8-1.8V7.3A1.8 1.8 0 0 1 9 5.5z" opacity="0.55"/>
+  <path d="M6 3.5h5l3.5 3.5v9a1.8 1.8 0 0 1-1.8 1.8H6a1.8 1.8 0 0 1-1.8-1.8V5.3A1.8 1.8 0 0 1 6 3.5z" fill="currentColor" fill-opacity="0.18" stroke="none"/>
+  <path d="M6 3.5h5l3.5 3.5v9a1.8 1.8 0 0 1-1.8 1.8H6a1.8 1.8 0 0 1-1.8-1.8V5.3A1.8 1.8 0 0 1 6 3.5z"/>
+  <path d="M11 3.5v3.5h3.5" opacity="0.55"/>
+  <path d="M5.8 5a1.4 1.4 0 0 1 1-1" stroke="#fff" stroke-opacity="0.4" stroke-width="1.1"/>
 </svg>

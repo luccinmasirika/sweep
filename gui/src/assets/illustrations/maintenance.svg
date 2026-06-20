@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <!-- ambient world halo behind the bolt -->
+    <radialGradient id="maintHalo" cx="50%" cy="46%" r="52%">
+      <stop offset="0" stop-color="#ffc071" stop-opacity="0.62"/>
+      <stop offset="45%" stop-color="#ff8a2b" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#ff8a2b" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- main glossy amber body of the bolt: light top-left -> deep ember bottom-right -->
+    <linearGradient id="maintBolt" x1="58" y1="34" x2="170" y2="214" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffe7c0"/>
+      <stop offset="22%" stop-color="#ffc163"/>
+      <stop offset="52%" stop-color="#ff8f2d"/>
+      <stop offset="80%" stop-color="#e9590f"/>
+      <stop offset="100%" stop-color="#a8350a"/>
+    </linearGradient>
+
+    <!-- inner radial "molten core" glow that lifts the centre -->
+    <radialGradient id="maintCore" cx="44%" cy="32%" r="68%">
+      <stop offset="0" stop-color="#fff3da" stop-opacity="0.95"/>
+      <stop offset="38%" stop-color="#ffcf86" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#ffcf86" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- bevel edge: bright rim light along the lit edge -->
+    <linearGradient id="maintRim" x1="60" y1="40" x2="150" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="40%" stop-color="#ffe3b4" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- specular top sheen -->
+    <linearGradient id="maintSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- glassy plinth disc the bolt sits on -->
+    <radialGradient id="maintDisc" cx="50%" cy="38%" r="62%">
+      <stop offset="0" stop-color="#ffd49a" stop-opacity="0.30"/>
+      <stop offset="70%" stop-color="#ff8a2b" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#ff8a2b" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- soft contact shadow under the bolt -->
+    <filter id="maintShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+    <!-- gentle blur for the glow accent sparks -->
+    <filter id="maintSoft" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="4.5"/>
+    </filter>
+    <!-- crisp self-cast shadow inside the bolt for depth -->
+    <filter id="maintDrop" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#5e1c04" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- ambient world halo -->
+  <circle cx="120" cy="116" r="104" fill="url(#maintHalo)"/>
+
+  <!-- glassy plinth + contact shadow -->
+  <ellipse cx="120" cy="206" rx="58" ry="15" fill="#46160a" opacity="0.55" filter="url(#maintShadow)"/>
+  <ellipse cx="120" cy="150" rx="86" ry="40" fill="url(#maintDisc)"/>
+
+  <!-- the bolt -->
+  <g filter="url(#maintDrop)">
+    <!-- body -->
+    <path d="M141 26
+             L70 128
+             h36
+             l-19 86
+             l81 -112
+             h-39
+             l22 -62 z"
+          fill="url(#maintBolt)"/>
+
+    <!-- molten inner core highlight -->
+    <path d="M141 26
+             L70 128
+             h36
+             l-19 86
+             l81 -112
+             h-39
+             l22 -62 z"
+          fill="url(#maintCore)"/>
+
+    <!-- bright rim light on the lit (upper-left) edge -->
+    <path d="M141 28 L72 127 h33"
+          stroke="url(#maintRim)" stroke-width="5"
+          stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+    <!-- dark ember edge on the shadowed (lower-right) side for dimension -->
+    <path d="M168 102 h-37 l-21 60"
+          stroke="#8f2c06" stroke-width="3.5" stroke-opacity="0.5"
+          stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+    <!-- specular streak: glossy reflection running down the upper limb -->
+    <path d="M132 44 L96 96 h12 l-6 26"
+          stroke="url(#maintSheen)" stroke-width="9"
+          stroke-linecap="round" stroke-linejoin="round" fill="none"
+          opacity="0.55"/>
+
+    <!-- tight specular hotspot near the top fold -->
+    <ellipse cx="118" cy="58" rx="11" ry="20" transform="rotate(28 118 58)"
+             fill="url(#maintSheen)" opacity="0.7"/>
+  </g>
+
+  <!-- energy sparks orbiting, echoing the world accent -->
+  <circle cx="178" cy="70" r="6" fill="#ffd9a0" filter="url(#maintSoft)"/>
+  <circle cx="178" cy="70" r="2.6" fill="#fff5e6"/>
+  <circle cx="58" cy="176" r="5" fill="#ffb866" filter="url(#maintSoft)"/>
+  <circle cx="58" cy="176" r="2.2" fill="#fff1da"/>
+  <circle cx="190" cy="150" r="3.4" fill="#ffcf86" filter="url(#maintSoft)"/>
+</svg>

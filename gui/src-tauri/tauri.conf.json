@@ -13,17 +13,20 @@
     "windows": [
       {
         "title": "Sweep",
-        "width": 1100,
-        "height": 720,
-        "minWidth": 940,
-        "minHeight": 600,
+        "width": 1180,
+        "height": 800,
+        "minWidth": 980,
+        "minHeight": 640,
         "resizable": true,
         "fullscreen": false,
         "theme": "Dark",
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "transparent": true,
+        "trafficLightPosition": { "x": 20, "y": 28 }
       }
     ],
+    "macOSPrivateApi": true,
     "security": {
       "csp": null
     }

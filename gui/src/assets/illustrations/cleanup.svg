@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <!-- world halo behind the whole object -->
+    <radialGradient id="cleanupHalo" cx="50%" cy="46%" r="52%">
+      <stop offset="0" stop-color="#34e89e" stop-opacity="0.55"/>
+      <stop offset="55%" stop-color="#19c37d" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#19c37d" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- glossy emerald disc body, light top-left -> dark bottom-right -->
+    <radialGradient id="cleanupDisc" cx="34%" cy="26%" r="86%">
+      <stop offset="0" stop-color="#aef9d6"/>
+      <stop offset="30%" stop-color="#34e89e"/>
+      <stop offset="64%" stop-color="#16b478"/>
+      <stop offset="100%" stop-color="#075c3c"/>
+    </radialGradient>
+    <radialGradient id="cleanupDiscRim" cx="50%" cy="50%" r="50%">
+      <stop offset="78%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="93%" stop-color="#d6fff0" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#042a1f" stop-opacity="0.4"/>
+    </radialGradient>
+    <radialGradient id="cleanupInnerWell" cx="50%" cy="44%" r="60%">
+      <stop offset="0" stop-color="#0a7a52" stop-opacity="0.0"/>
+      <stop offset="68%" stop-color="#063f2b" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#021d14" stop-opacity="0.75"/>
+    </radialGradient>
+
+    <!-- broom handle: glossy metal/wood cylinder -->
+    <linearGradient id="cleanupHandle" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0a4f37"/>
+      <stop offset="34%" stop-color="#34e89e"/>
+      <stop offset="55%" stop-color="#eafff5"/>
+      <stop offset="72%" stop-color="#19c37d"/>
+      <stop offset="100%" stop-color="#063b29"/>
+    </linearGradient>
+    <linearGradient id="cleanupCollar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0c6b48"/>
+      <stop offset="50%" stop-color="#7bf3c2"/>
+      <stop offset="100%" stop-color="#085138"/>
+    </linearGradient>
+
+    <!-- broom head -->
+    <linearGradient id="cleanupHead" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5af0b0"/>
+      <stop offset="100%" stop-color="#0c8255"/>
+    </linearGradient>
+    <linearGradient id="cleanupBristle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#bdf7dc"/>
+      <stop offset="55%" stop-color="#3fdd99"/>
+      <stop offset="100%" stop-color="#0a6b45"/>
+    </linearGradient>
+
+    <!-- sparkle gradient -->
+    <radialGradient id="cleanupSpark" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="cleanupSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- soft contact shadow -->
+    <filter id="cleanupShadow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+    <filter id="cleanupSoft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.4"/>
+    </filter>
+    <filter id="cleanupGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+
+  <!-- ambient world halo -->
+  <circle cx="120" cy="116" r="104" fill="url(#cleanupHalo)"/>
+
+  <!-- grounded contact shadow -->
+  <ellipse cx="122" cy="204" rx="74" ry="15" fill="#02241a" opacity="0.5" filter="url(#cleanupShadow)"/>
+
+  <!-- ===== glossy emerald disc (the green object) ===== -->
+  <g>
+    <ellipse cx="120" cy="138" rx="86" ry="58" fill="url(#cleanupDisc)"/>
+    <ellipse cx="120" cy="138" rx="86" ry="58" fill="url(#cleanupDiscRim)"/>
+    <!-- inner dished well so it reads dimensional -->
+    <ellipse cx="120" cy="134" rx="64" ry="40" fill="url(#cleanupInnerWell)"/>
+    <!-- rim light bottom-right -->
+    <path d="M178 152a86 58 0 0 1-116 32" stroke="#d6fff0" stroke-opacity="0.35" stroke-width="2.4" fill="none" stroke-linecap="round" filter="url(#cleanupSoft)"/>
+    <!-- big specular highlight ellipse, top-left -->
+    <ellipse cx="92" cy="112" rx="40" ry="18" fill="url(#cleanupSheen)" opacity="0.6" filter="url(#cleanupSoft)"/>
+    <ellipse cx="80" cy="106" rx="14" ry="6" fill="#ffffff" opacity="0.85"/>
+  </g>
+
+  <!-- ===== broom sweeping across the disc ===== -->
+  <g transform="rotate(-22 120 120)">
+    <!-- handle shadow -->
+    <rect x="138" y="34" width="13" height="92" rx="6.5" fill="#03281c" opacity="0.35" filter="url(#cleanupSoft)" transform="translate(4 5)"/>
+    <!-- handle -->
+    <rect x="138" y="34" width="13" height="92" rx="6.5" fill="url(#cleanupHandle)"/>
+    <!-- handle top cap -->
+    <ellipse cx="144.5" cy="34" rx="6.5" ry="3.2" fill="#eafff5" opacity="0.9"/>
+    <!-- handle highlight streak -->
+    <rect x="141" y="38" width="2.6" height="84" rx="1.3" fill="#ffffff" opacity="0.55"/>
+
+    <!-- collar joining handle to head -->
+    <rect x="131" y="120" width="27" height="16" rx="6" fill="url(#cleanupCollar)"/>
+    <rect x="133" y="122" width="23" height="4" rx="2" fill="#ffffff" opacity="0.4"/>
+
+    <!-- broom head block -->
+    <path d="M124 134h41a8 8 0 0 1 8 8l-3 16h-51l-3-16a8 8 0 0 1 8-8z" fill="url(#cleanupHead)"/>
+    <path d="M126 137h37" stroke="#ffffff" stroke-opacity="0.45" stroke-width="2" stroke-linecap="round"/>
+
+    <!-- bristles -->
+    <path d="M120 158h53l9 30a4 4 0 0 1-3.6 5.6l-63 0a4 4 0 0 1-3.6-5.6z" fill="url(#cleanupBristle)"/>
+    <g stroke="#0a6b45" stroke-opacity="0.55" stroke-width="1.6" stroke-linecap="round">
+      <path d="M128 160l-5 32"/>
+      <path d="M138 160l-3 33"/>
+      <path d="M148 160v33"/>
+      <path d="M158 160l3 33"/>
+      <path d="M168 160l5 32"/>
+    </g>
+    <!-- bristle sheen -->
+    <path d="M122 160h49l2 7h-53z" fill="#ffffff" opacity="0.3"/>
+  </g>
+
+  <!-- ===== swept-up sparkles / cleaned dust ===== -->
+  <g filter="url(#cleanupGlow)">
+    <circle cx="64" cy="150" r="5" fill="url(#cleanupSpark)"/>
+    <circle cx="52" cy="128" r="3.4" fill="url(#cleanupSpark)"/>
+    <circle cx="76" cy="170" r="3" fill="url(#cleanupSpark)"/>
+  </g>
+  <!-- four-point twinkle stars -->
+  <g fill="#ffffff">
+    <path d="M86 70c1 7 2 8 9 9-7 1-8 2-9 9-1-7-2-8-9-9 7-1 8-2 9-9z" opacity="0.9"/>
+    <path d="M180 90c.7 5 1.4 5.6 6.4 6.3-5 .7-5.7 1.3-6.4 6.3-.7-5-1.4-5.6-6.4-6.3 5-.7 5.7-1.3 6.4-6.3z" opacity="0.8"/>
+    <path d="M158 60c.5 3.4 1 3.9 4.4 4.4-3.4.5-3.9 1-4.4 4.4-.5-3.4-1-3.9-4.4-4.4 3.4-.5 3.9-1 4.4-4.4z" opacity="0.7"/>
+  </g>
+</svg>

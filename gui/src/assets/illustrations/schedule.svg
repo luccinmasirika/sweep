@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <!-- ambient world halo behind the dial -->
+    <radialGradient id="schedHalo" cx="50%" cy="46%" r="52%">
+      <stop offset="0" stop-color="#6f8bff" stop-opacity="0.62"/>
+      <stop offset="42%" stop-color="#2bd4ff" stop-opacity="0.34"/>
+      <stop offset="100%" stop-color="#2bd4ff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- glossy outer bezel ring -->
+    <linearGradient id="schedBezel" x1="0.18" y1="0.06" x2="0.86" y2="0.96">
+      <stop offset="0" stop-color="#bff2ff"/>
+      <stop offset="34" stop-color="#3bd6ff"/>
+      <stop offset="68" stop-color="#3a4bc4"/>
+      <stop offset="100" stop-color="#1a2170"/>
+    </linearGradient>
+    <radialGradient id="schedBezelInner" cx="34%" cy="26%" r="84%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="30" stop-color="#9be8ff" stop-opacity="0.0"/>
+      <stop offset="100" stop-color="#0e1240" stop-opacity="0.0"/>
+    </radialGradient>
+
+    <!-- recessed dial face (deep indigo well, lit top-left) -->
+    <radialGradient id="schedFace" cx="38%" cy="30%" r="82%">
+      <stop offset="0" stop-color="#2a4fb6"/>
+      <stop offset="46" stop-color="#172a86"/>
+      <stop offset="100" stop-color="#0b1148"/>
+    </radialGradient>
+    <radialGradient id="schedFaceVignette" cx="50%" cy="56%" r="60%">
+      <stop offset="62" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100" stop-color="#05082a" stop-opacity="0.7"/>
+    </radialGradient>
+
+    <!-- top sheen on the glass crystal -->
+    <linearGradient id="schedSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.78"/>
+      <stop offset="100" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="schedHand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="100" stop-color="#bfe6ff"/>
+    </linearGradient>
+    <radialGradient id="schedHub" cx="38%" cy="32%" r="80%">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="60" stop-color="#2bd4ff"/>
+      <stop offset="100" stop-color="#2b3aa0"/>
+    </radialGradient>
+
+    <filter id="schedShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <filter id="schedSoftGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3.4"/>
+    </filter>
+    <filter id="schedRim" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="1.6"/>
+    </filter>
+  </defs>
+
+  <!-- world halo -->
+  <circle cx="120" cy="114" r="112" fill="url(#schedHalo)"/>
+
+  <!-- contact shadow -->
+  <ellipse cx="120" cy="202" rx="68" ry="16" fill="#06091f" opacity="0.55" filter="url(#schedShadow)"/>
+
+  <!-- glossy bezel ring -->
+  <circle cx="120" cy="114" r="86" fill="url(#schedBezel)"/>
+  <circle cx="120" cy="114" r="86" fill="url(#schedBezelInner)"/>
+  <!-- rim light along the lower edge -->
+  <circle cx="120" cy="114" r="86" fill="none" stroke="#9be8ff" stroke-width="1.4" opacity="0.45" filter="url(#schedRim)"/>
+
+  <!-- recessed dial face -->
+  <circle cx="120" cy="114" r="69" fill="url(#schedFace)"/>
+  <circle cx="120" cy="114" r="69" fill="url(#schedFaceVignette)"/>
+  <!-- inner shadow lip where face meets bezel -->
+  <circle cx="120" cy="114" r="69" fill="none" stroke="#05082a" stroke-width="3" opacity="0.5"/>
+  <circle cx="120" cy="114" r="67" fill="none" stroke="#7fb6ff" stroke-width="0.8" opacity="0.28"/>
+
+  <!-- minute pips -->
+  <g stroke="#bfe6ff" stroke-linecap="round" opacity="0.7">
+    <line x1="120" y1="51" x2="120" y2="61" stroke-width="3.4" opacity="0.95"/>
+    <line x1="183" y1="114" x2="173" y2="114" stroke-width="3.4" opacity="0.95"/>
+    <line x1="120" y1="177" x2="120" y2="167" stroke-width="3.4" opacity="0.95"/>
+    <line x1="57" y1="114" x2="67" y2="114" stroke-width="3.4" opacity="0.95"/>
+  </g>
+  <g stroke="#7fa6ff" stroke-linecap="round" stroke-width="2" opacity="0.5">
+    <line x1="151.5" y1="59.6" x2="148.5" y2="64.8"/>
+    <line x1="174.4" y1="82.5" x2="169.2" y2="85.5"/>
+    <line x1="174.4" y1="145.5" x2="169.2" y2="142.5"/>
+    <line x1="151.5" y1="168.4" x2="148.5" y2="163.2"/>
+    <line x1="88.5" y1="168.4" x2="91.5" y2="163.2"/>
+    <line x1="65.6" y1="145.5" x2="70.8" y2="142.5"/>
+    <line x1="65.6" y1="82.5" x2="70.8" y2="85.5"/>
+    <line x1="88.5" y1="59.6" x2="91.5" y2="64.8"/>
+  </g>
+
+  <!-- hands (10:08, with a soft glow) -->
+  <g filter="url(#schedSoftGlow)" opacity="0.9">
+    <line x1="120" y1="114" x2="92" y2="92" stroke="#2bd4ff" stroke-width="7" stroke-linecap="round"/>
+    <line x1="120" y1="114" x2="148" y2="78" stroke="#2bd4ff" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <line x1="120" y1="114" x2="92" y2="92" stroke="url(#schedHand)" stroke-width="6.5" stroke-linecap="round"/>
+  <line x1="120" y1="114" x2="148" y2="78" stroke="url(#schedHand)" stroke-width="5.5" stroke-linecap="round"/>
+  <!-- slim accent second hand -->
+  <line x1="120" y1="114" x2="138" y2="150" stroke="#9be8ff" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- center hub -->
+  <circle cx="120" cy="114" r="8.5" fill="url(#schedHub)"/>
+  <circle cx="120" cy="114" r="8.5" fill="none" stroke="#ffffff" stroke-width="0.8" opacity="0.6"/>
+  <circle cx="117.6" cy="111.4" r="2.4" fill="#ffffff" opacity="0.9"/>
+
+  <!-- glass crystal sheen over the whole dial -->
+  <path d="M58 100c14-30 44-50 80-46 22 2 41 13 53 30-10-6-58-22-92-12C76 78 64 88 58 100Z"
+        fill="url(#schedSheen)" opacity="0.55"/>
+  <ellipse cx="98" cy="84" rx="30" ry="16" fill="#ffffff" opacity="0.18"/>
+</svg>
