@@ -47,7 +47,7 @@ body {
    Rounded corners keep the native macOS window shape. */
 #app {
   height: 100vh;
-  border-radius: 12px;
+  border-radius: 18px;
   overflow: hidden;
 }
 
