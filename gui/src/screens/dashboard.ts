@@ -547,15 +547,16 @@ function injectStyles(): void {
 
 const CSS = `
 .screen-dash {
-  max-width: 880px;
+  max-width: 960px;
   margin: 0 auto;
   width: 100%;
+  padding: 12px 0 var(--s-6);
 }
 
 /* hero pane uses the foundation .hero grammar; tighten its top padding so the
    ring + art read as one stage */
 .dash-hero-pane {
-  padding-top: var(--s-4);
+  padding-top: 12px;
 }
 .dash-hero-pane[hidden] { display: none; }
 
@@ -697,7 +698,7 @@ const CSS = `
 
 /* ---- results pane -------------------------------------------------------- */
 .dash-results-pane {
-  padding-top: var(--s-4);
+  padding-top: 0;
   opacity: 0;
   transform: translateY(10px);
   transition: opacity var(--t-slow) var(--ease), transform var(--t-slow) var(--ease);

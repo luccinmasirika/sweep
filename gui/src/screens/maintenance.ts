@@ -384,15 +384,15 @@ function injectStyles(): void {
 .mt {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  max-width: 880px;
+  max-width: 960px;
   margin: 0 auto;
-  padding: var(--s-5) var(--s-4) var(--s-7);
+  width: 100%;
+  padding: 12px 0 var(--s-7);
   animation: fade-up var(--t-slow) var(--ease) both;
 }
 
 /* hero */
-.mt-hero { padding-top: var(--s-4); padding-bottom: var(--s-4); }
+.mt-hero { align-items: center; text-align: center; padding-top: 12px; padding-bottom: var(--s-4); }
 .mt-hero .hero-art { width: 240px; height: 240px; }
 
 .mt-cta-pedestal {

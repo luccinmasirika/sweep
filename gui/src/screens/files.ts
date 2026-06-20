@@ -951,7 +951,13 @@ function injectStyles(): void {
 }
 
 const CSS = `
-.fl { gap: 0; }
+.fl {
+  gap: 0;
+  max-width: 960px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 12px 0 var(--s-6);
+}
 
 /* ---- hero (idle) ---- */
 .fl-hero {
@@ -961,7 +967,7 @@ const CSS = `
   text-align: center;
   max-width: 880px;
   margin: 0 auto;
-  padding: var(--s-5) var(--s-4) var(--s-6);
+  padding: 12px var(--s-4) var(--s-6);
   animation: fade-up var(--t-slow) var(--ease) both;
 }
 .fl-hero.is-leaving {
@@ -989,10 +995,8 @@ const CSS = `
 
 /* ---- results ---- */
 .fl-results {
-  max-width: 880px;
-  margin: 0 auto;
-  padding: var(--s-5) 0 var(--s-6);
   width: 100%;
+  padding: 0 0 var(--s-6);
   opacity: 0;
   transition: opacity var(--t-slow) var(--ease);
 }

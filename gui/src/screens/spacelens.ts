@@ -741,10 +741,14 @@ function injectStyles(): void {
   const style = document.createElement("style");
   style.id = STYLE_ID;
   style.textContent = `
-.screen-spacelens { gap: 0; }
+.screen-spacelens {
+  gap: 0;
+  max-width: 960px; margin: 0 auto; width: 100%;
+  padding: 12px 0 var(--s-6);
+}
 
 /* ---- idle hero ---- */
-.lens-hero { transition: opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease); }
+.lens-hero { padding-top: 12px; transition: opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease); }
 .lens-hero.is-leaving { opacity: 0; transform: translateY(-8px); pointer-events: none; }
 .lens-hero .hero-art { transform: translate(var(--px, 0px), var(--py, 0px)); transition: transform 220ms var(--ease-soft); }
 .lens-cta-pedestal { margin-top: var(--s-6); margin-bottom: var(--s-3); }
@@ -752,7 +756,7 @@ function injectStyles(): void {
 .lens-hint { font-size: 13px; color: var(--text-faint); margin-top: var(--s-3); }
 
 /* ---- results frame ---- */
-.lens-results { opacity: 0; }
+.lens-results { opacity: 0; max-width: 960px; margin: 0 auto; width: 100%; }
 .lens-results.is-in { animation: fade-up var(--t-slow) var(--ease) both; opacity: 1; }
 .lens-head { margin-bottom: var(--s-4); align-items: center; }
 .lens-head-left { min-width: 0; }

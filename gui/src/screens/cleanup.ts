@@ -529,7 +529,7 @@ function injectStyles(): void {
   const style = document.createElement("style");
   style.dataset.screen = "cleanup";
   style.textContent = `
-.cl { padding: var(--s-5) var(--s-4); max-width: 880px; margin: 0 auto; width: 100%; }
+.cl { padding: 12px 0 var(--s-6); max-width: 960px; margin: 0 auto; width: 100%; }
 
 /* --- idle / hero --- */
 .cl-hero {

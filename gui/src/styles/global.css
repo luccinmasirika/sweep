@@ -297,6 +297,7 @@ small {
 .screen {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: var(--gap);
   animation: fade-up var(--t-slow) var(--ease) both;
 }

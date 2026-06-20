@@ -19,8 +19,10 @@ const STYLES = `
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  flex: 1;
+  max-width: 960px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 12px 0 var(--s-6);
 }
 
 /* ---- idle / hero ---- */
@@ -31,7 +33,7 @@ const STYLES = `
   text-align: center;
   max-width: 880px;
   margin: 0 auto;
-  padding: var(--s-6) var(--s-4) var(--s-7);
+  padding: 12px var(--s-4) var(--s-7);
 }
 .ap-hero-art {
   position: relative;
@@ -71,12 +73,8 @@ const STYLES = `
 .ap-results {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  flex: 1;
-  max-width: 1040px;
   width: 100%;
-  margin: 0 auto;
-  padding: var(--s-4) 0 var(--s-2);
+  padding: 0;
   animation: fade-up var(--t-slow) var(--ease) both;
 }
 .ap-results-head {
@@ -151,9 +149,6 @@ const STYLES = `
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
   gap: var(--s-3);
   align-content: start;
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1;
   padding: 2px 4px 32px;
 }
 .ap-card {
@@ -208,7 +203,6 @@ const STYLES = `
   justify-content: center;
   gap: 14px;
   min-height: 280px;
-  flex: 1;
   color: var(--text-dim);
   text-align: center;
   padding: 40px;
@@ -429,8 +423,6 @@ export function renderApplications(root: HTMLElement, api: Api): void {
   const stage = document.createElement("div");
   stage.style.display = "flex";
   stage.style.flexDirection = "column";
-  stage.style.flex = "1";
-  stage.style.minHeight = "0";
   screen.appendChild(stage);
 
   // ---- Detail panel (shared across the results state) --------------------

@@ -614,13 +614,19 @@ function injectStyles(): void {
 }
 
 const STYLES = `
-.pv { gap: 0; }
+.pv {
+  gap: 0;
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 12px 0 0;
+}
 
 /* hero stage cross-fades against the results grid */
 .pv-stage { animation: fade-up var(--t-slow) var(--ease) both; }
 .pv-results { animation: fade-up var(--t-slow) var(--ease) both; }
 
-.pv-hero { padding-top: var(--s-6); padding-bottom: var(--s-7); }
+.pv-hero { padding-top: 12px; padding-bottom: var(--s-7); }
 .pv-art {
   transform: translate(var(--px, 0px), var(--py, 0px));
   transition: transform 240ms var(--ease-soft);
@@ -661,7 +667,12 @@ const STYLES = `
 
 /* --- results grid --- */
 .pv-head { margin-bottom: var(--s-4); }
-.pv-results { padding-bottom: 132px; }
+.pv-results {
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
+  padding-bottom: 132px;
+}
 
 .pv-card {
   display: flex;

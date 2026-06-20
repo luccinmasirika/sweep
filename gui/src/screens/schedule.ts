@@ -449,10 +449,10 @@ function injectStyles(): void {
 .sch {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  max-width: 880px;
+  width: 100%;
+  max-width: 960px;
   margin: 0 auto;
-  padding: var(--s-5) var(--s-4) var(--s-7);
+  padding: 12px 0 var(--s-7);
 }
 .sch-wrap {
   width: 100%;
@@ -463,7 +463,7 @@ function injectStyles(): void {
 }
 
 /* hero */
-.sch-hero { padding-top: var(--s-4); padding-bottom: var(--s-4); width: 100%; }
+.sch-hero { padding-top: 12px; padding-bottom: var(--s-4); width: 100%; }
 .sch-hero .hero-art { width: 240px; height: 240px; }
 
 /* loading / error state */
