@@ -155,12 +155,32 @@ export function renderCleanup(root: HTMLElement, api: Api): void {
 
     const grid = document.createElement("div");
     grid.className = "grid cl-grid";
+
+    const width = el.clientWidth || 920;
+    const colCount = Math.max(1, Math.min(3, Math.floor(width / 360)));
+    const cols: HTMLElement[] = [];
+    const heights: number[] = [];
+    for (let i = 0; i < colCount; i++) {
+      const col = document.createElement("div");
+      col.className = "cl-col";
+      grid.appendChild(col);
+      cols.push(col);
+      heights.push(0);
+    }
+
     let delay = 0;
     for (const report of withFindings) {
       const card = buildCard(report, grandTotal);
       card.style.animationDelay = `${delay}ms`;
       delay += 40;
-      grid.appendChild(card);
+      // Drop the card into the shortest column so heights stay balanced.
+      let shortest = 0;
+      for (let i = 1; i < heights.length; i++) {
+        if (heights[i] < heights[shortest]) shortest = i;
+      }
+      cols[shortest].appendChild(card);
+      const rows = report.findings.length + 1; // findings + the select-all row
+      heights[shortest] += 150 + Math.min(rows * 44, 320);
     }
     results.appendChild(grid);
 
@@ -570,13 +590,16 @@ function injectStyles(): void {
 
 .cl-clean.is-busy { pointer-events: none; opacity: 0.8; }
 
-/* Masonry-style columns: cards of different heights pack tightly with no row
-   gaps (a short card no longer leaves a hole before the next one). */
-.cl-grid { display: block; column-width: 340px; column-gap: var(--gap); }
+/* Masonry: cards are distributed into flex columns in JS (each whole card goes
+   to the shortest column) so different heights pack tightly with no row gaps
+   and no card is ever split across a column break. */
+.cl-grid { display: flex; align-items: flex-start; gap: var(--gap); }
+.cl-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--gap); }
 .cl-card {
-  break-inside: avoid;
-  -webkit-column-break-inside: avoid;
-  margin-bottom: var(--gap);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.12),
+    0 8px 22px rgba(0, 0, 0, 0.1),
+    var(--sheen);
   animation: fade-up var(--t-slow) var(--ease) both;
 }
 
