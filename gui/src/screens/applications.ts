@@ -141,7 +141,7 @@ const STYLES = `
 .ap-search input:focus {
   border-color: color-mix(in srgb, var(--accent-2) 70%, transparent);
   background: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 0 0 3px var(--glow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .ap-grid {
@@ -180,9 +180,9 @@ const STYLES = `
     radial-gradient(120% 120% at 30% 22%, rgba(255, 255, 255, 0.4), transparent 55%),
     linear-gradient(150deg, var(--accent), var(--accent-2));
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.18) inset,
-    0 8px 20px var(--glow),
-    0 2px 6px rgba(0, 0, 0, 0.32);
+    var(--sheen),
+    0 2px 6px rgba(0, 0, 0, 0.22),
+    0 8px 22px var(--glow);
 }
 .ap-name {
   position: relative;

@@ -475,7 +475,7 @@ function injectStyles(): void {
   background:
     radial-gradient(120% 120% at 30% 20%, rgba(255, 255, 255, 0.18), transparent 60%),
     color-mix(in srgb, var(--accent) 22%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  box-shadow: var(--sheen);
 }
 .mt-card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .mt-card-title {
@@ -521,9 +521,7 @@ function injectStyles(): void {
 }
 .mt-card:not(.is-selected) {
   border-color: var(--hairline);
-  box-shadow:
-    0 1px 0 0 rgba(255, 255, 255, 0.08) inset,
-    0 14px 38px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--el-1), var(--sheen);
 }
 .mt-card:not(.is-selected) .mt-card-icon { color: var(--text-faint); background: rgba(255, 255, 255, 0.06); box-shadow: none; }
 .mt-card:not(.is-selected) .mt-card-blurb { color: var(--text-faint); }

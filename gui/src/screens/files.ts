@@ -1229,7 +1229,12 @@ const CSS = `
   background:
     radial-gradient(120% 120% at 30% 22%, rgba(255,255,255,0.3), transparent 55%),
     linear-gradient(150deg, var(--danger), #ff8a95);
-  box-shadow: 0 8px 24px rgba(255, 93, 108, 0.32), 0 0 0 1px rgba(255,255,255,0.18) inset;
+  box-shadow:
+    0 2px 6px rgba(0,0,0,0.24),
+    0 8px 20px rgba(0,0,0,0.2),
+    0 6px 22px rgba(255,93,108,0.28),
+    var(--sheen-strong),
+    inset 0 -1px 0 rgba(0,0,0,0.18);
 }
 
 @media (prefers-reduced-motion: reduce) {

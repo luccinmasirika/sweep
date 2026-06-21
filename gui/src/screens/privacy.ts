@@ -646,9 +646,11 @@ const STYLES = `
     radial-gradient(120% 120% at 30% 22%, rgba(255,255,255,0.28), transparent 55%),
     linear-gradient(150deg, var(--accent), var(--accent-2));
   box-shadow:
-    0 0 0 1px rgba(255,255,255,0.18) inset,
-    0 10px 30px var(--glow),
-    0 2px 6px rgba(0,0,0,0.35);
+    0 2px 6px rgba(0,0,0,0.24),
+    0 12px 30px rgba(0,0,0,0.22),
+    0 10px 36px var(--glow),
+    inset 0 1.5px 0 rgba(255,255,255,0.45),
+    inset 0 -2px 6px rgba(0,0,0,0.2);
   animation: cta-pulse 3.2s var(--ease-soft) infinite;
 }
 .pv-cta-spinner {
@@ -694,7 +696,7 @@ const STYLES = `
   border-radius: 14px;
   color: var(--accent-2);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  box-shadow: 0 1px 0 0 rgba(255,255,255,0.14) inset;
+  box-shadow: var(--sheen);
 }
 .pv-card-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pv-card-title { font-size: 15px; font-weight: 600; }
@@ -864,8 +866,8 @@ const STYLES = `
   -webkit-backdrop-filter: blur(28px) saturate(1.6);
   backdrop-filter: blur(28px) saturate(1.6);
   box-shadow:
-    0 1px 0 0 rgba(255,255,255,0.12) inset,
-    0 18px 48px rgba(0,0,0,0.42);
+    var(--el-3),
+    var(--sheen);
 }
 .pv-dock-summary { display: flex; flex-direction: column; gap: 2px; }
 .pv-dock-size {

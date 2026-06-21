@@ -522,7 +522,7 @@ function injectStyles(): void {
   color: #fff;
   background: linear-gradient(150deg, var(--accent), var(--accent-2));
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+    var(--sheen-strong),
     0 6px 18px var(--glow);
 }
 .sch-seg-opt:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
@@ -573,7 +573,7 @@ function injectStyles(): void {
   color: #fff;
   background: linear-gradient(150deg, var(--accent), var(--accent-2));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    var(--sheen-strong),
     0 8px 22px var(--glow);
 }
 .sch-active-badge svg { width: 22px; height: 22px; }
@@ -597,9 +597,11 @@ function injectStyles(): void {
     radial-gradient(120% 120% at 30% 22%, rgba(255, 255, 255, 0.22), transparent 55%),
     linear-gradient(150deg, color-mix(in srgb, var(--danger) 92%, #000), var(--danger));
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.16) inset,
-    0 8px 22px color-mix(in srgb, var(--danger) 45%, transparent),
-    0 2px 6px rgba(0, 0, 0, 0.32);
+    0 2px 6px rgba(0, 0, 0, 0.24),
+    0 8px 20px rgba(0, 0, 0, 0.2),
+    0 6px 22px rgba(255, 93, 108, 0.28),
+    var(--sheen-strong),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
 }
 
 /* explainer */
@@ -710,9 +712,11 @@ function injectStyles(): void {
     radial-gradient(120% 120% at 30% 22%, rgba(255, 255, 255, 0.22), transparent 55%),
     linear-gradient(150deg, color-mix(in srgb, var(--danger) 92%, #000), var(--danger));
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.16) inset,
-    0 8px 22px color-mix(in srgb, var(--danger) 45%, transparent),
-    0 2px 6px rgba(0, 0, 0, 0.32);
+    0 2px 6px rgba(0, 0, 0, 0.24),
+    0 8px 20px rgba(0, 0, 0, 0.2),
+    0 6px 22px rgba(255, 93, 108, 0.28),
+    var(--sheen-strong),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
 }
 
 @media (max-width: 560px) {

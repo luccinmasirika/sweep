@@ -50,6 +50,34 @@
   --t-base: 220ms;
   --t-slow: 300ms;
 
+  /* elevation — multi-layer, low-opacity. A tight contact shadow stacked with a
+     wide soft ambient reads as diffuse depth, not a single muddy blob. Shared by
+     cards, panels and buttons so the whole app lifts with one vocabulary. */
+  --el-1:
+    0 1px 1px rgba(0, 0, 0, 0.18),
+    0 2px 6px rgba(0, 0, 0, 0.16),
+    0 8px 18px rgba(0, 0, 0, 0.14);
+  --el-2:
+    0 1px 1px rgba(0, 0, 0, 0.2),
+    0 4px 10px rgba(0, 0, 0, 0.2),
+    0 14px 30px rgba(0, 0, 0, 0.22);
+  --el-3:
+    0 2px 4px rgba(0, 0, 0, 0.24),
+    0 10px 24px rgba(0, 0, 0, 0.26),
+    0 28px 60px rgba(0, 0, 0, 0.34);
+
+  /* glass rims — the crisp inner light edge that sells the material, plus a
+     bottom inner shade that grounds translucent fills */
+  --sheen: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  --sheen-strong: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  --inner-floor: inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+
+  /* frosted glass material */
+  --glass-fill: rgba(255, 255, 255, 0.06);
+  --glass-fill-h: rgba(255, 255, 255, 0.1);
+  --glass-stroke: rgba(255, 255, 255, 0.14);
+  --glass-blur: blur(20px) saturate(160%);
+
   /* neutral default world so a screen renders even before a theme is set */
   --accent: #7b5bff;
   --accent-2: #9d7bff;
@@ -66,8 +94,8 @@
   --personal: #ff8a5b;
   --radius: 12px;
   --radius-lg: var(--radius-card);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.32);
-  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.28);
+  --shadow: var(--el-1);
+  --shadow-lg: var(--el-3);
   --speed: var(--t-fast);
   --speed-slow: var(--t-base);
   --accent-grad: linear-gradient(135deg, var(--accent), var(--accent-2));
