@@ -223,20 +223,27 @@ const STYLES = `
 .ap-state p { margin: 0; max-width: 380px; font-size: 14px; line-height: 1.5; }
 
 /* ---- detail panel ---- */
+/* A right-docked drawer pinned to the window (position: fixed) so it keeps the
+   full window height and never scrolls with the page — only its body scrolls.
+   Inset 10px to mirror the sidebar's floating margin and stay inside the window
+   rounding. */
 .ap-panel {
-  position: absolute;
-  inset: 0;
-  z-index: 6;
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  bottom: 10px;
+  width: min(520px, 46vw);
+  z-index: 30;
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
   border-radius: var(--radius-card);
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateX(16px);
   transition: opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease);
 }
-.ap-panel.is-open { opacity: 1; transform: translateY(0); }
+.ap-panel.is-open { opacity: 1; transform: translateX(0); }
 
 .ap-detail-header {
   position: relative;
