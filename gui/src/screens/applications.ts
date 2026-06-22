@@ -237,11 +237,11 @@ const STYLES = `
 /* ---- detail panel ---- */
 /* A right-docked drawer pinned to the window (position: fixed) so it keeps the
    full window height and never scrolls with the page — only its body scrolls.
-   Inset 10px to mirror the sidebar's floating margin and stay inside the window
-   rounding. */
+   Top clears the 44px titlebar drag region so the header isn't crammed against
+   the window's rounded top edge; 10px on the other sides mirrors the sidebar. */
 .ap-panel {
   position: fixed;
-  top: 10px;
+  top: 44px;
   right: 10px;
   bottom: 10px;
   width: min(520px, 46vw);
