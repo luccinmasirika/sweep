@@ -2,8 +2,8 @@
 //
 // Idle/hero: the glassy app-X hexagon floats over its halo with a circular
 // "Scan apps" CTA. Running it calls api.apps() and cross-fades into a glass grid
-// of app cards with a live search field. Selecting a card opens a glass detail
-// panel that resolves the app's full footprint via api.footprint(), totals it,
+// of app cards with a live search field. Selecting a card opens a centered glass
+// modal that resolves the app's full footprint via api.footprint(), totals it,
 // and offers a confirmed Uninstall → api.uninstall(query, false) that removes the
 // bundle and every leftover. Colours come from the world theme vars only.
 
@@ -222,49 +222,60 @@ const STYLES = `
 .ap-state h3 { margin: 0; color: var(--text); font-size: 18px; font-weight: 700; }
 .ap-state p { margin: 0; max-width: 380px; font-size: 14px; line-height: 1.5; }
 
-/* ---- detail panel ---- */
+/* ---- detail modal ---- */
 .ap-scrim {
   position: absolute;
   inset: 0;
   z-index: 5;
-  background: rgba(0, 0, 0, 0.42);
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--t-base) var(--ease);
+  transition: opacity 150ms var(--ease);
 }
+.ap-scrim[hidden] { display: none; }
 .ap-scrim.is-open { opacity: 1; pointer-events: auto; }
 .ap-panel {
-  position: absolute;
-  top: var(--s-3);
-  right: var(--s-3);
-  bottom: var(--s-3);
-  width: min(460px, calc(100% - var(--s-5)));
-  z-index: 6;
+  width: min(520px, 92vw);
+  max-height: 80vh;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  border-radius: var(--radius-card);
-  transform: translateX(calc(100% + var(--s-4)));
-  transition: transform var(--t-slow) var(--ease-soft);
+  border-radius: 16px;
+  background: rgba(22, 22, 26, 0.72);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(28px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: var(--el-3);
+  opacity: 0;
+  transform: scale(0.98);
+  transition: opacity 180ms ease-out, transform 180ms ease-out;
 }
-.ap-panel.is-open { transform: translateX(0); }
+.ap-scrim.is-open .ap-panel { opacity: 1; transform: scale(1); }
 
+.ap-detail-top { flex: 0 0 auto; }
 .ap-detail-header {
   position: relative;
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 20px 20px 16px;
-  border-bottom: 1px solid var(--hairline);
+  padding: 18px 20px 16px;
 }
-.ap-detail-header .ap-glyph { width: 50px; height: 50px; border-radius: 15px; font-size: 20px; flex: 0 0 auto; }
+.ap-detail-header .ap-glyph {
+  width: 48px;
+  height: 48px;
+  border-radius: 11px;
+  font-size: 19px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
 .ap-detail-heading { flex: 1; min-width: 0; }
 .ap-detail-heading h3 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
@@ -273,8 +284,8 @@ const STYLES = `
 .ap-detail-id {
   margin: 3px 0 0;
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-faint);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -283,44 +294,43 @@ const STYLES = `
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.06);
+  background: transparent;
   color: var(--text-dim);
   cursor: pointer;
   transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
-.ap-close:hover { background: rgba(255, 255, 255, 0.12); color: var(--text); }
+.ap-close:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
 .ap-close svg { width: 18px; height: 18px; stroke: currentColor; }
 
-.ap-detail-content {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 18px 20px;
-}
 .ap-total {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 16px 18px;
-  margin-bottom: 16px;
-  border-radius: var(--radius-tile);
-  background: rgba(255, 255, 255, 0.06);
+  gap: 12px;
+  padding: 14px 16px;
+  margin: 0 20px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--hairline);
 }
 .ap-total .ap-total-label {
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
 }
+.ap-total .ap-total-count {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
 .ap-total .ap-total-value {
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 600;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   background: linear-gradient(120deg, var(--accent), var(--accent-2));
@@ -328,44 +338,65 @@ const STYLES = `
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-.ap-fp-list { display: flex; flex-direction: column; gap: 2px; }
+
+.ap-detail-content {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 0 4px;
+  border-top: 1px solid var(--hairline);
+}
+.ap-fp-list { display: flex; flex-direction: column; padding: 6px 0; }
 .ap-fp-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 11px 12px;
-  border-radius: 12px;
+  min-height: 44px;
+  padding: 8px 20px;
+  border-radius: 8px;
   transition: background var(--t-fast) var(--ease);
 }
-.ap-fp-item:hover { background: rgba(255, 255, 255, 0.06); }
+.ap-fp-item:hover { background: rgba(255, 255, 255, 0.05); }
 .ap-fp-path {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
   font-size: 13px;
   color: var(--text);
-  white-space: nowrap;
+}
+.ap-fp-path .ap-path-head {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
+  white-space: nowrap;
+}
+.ap-fp-path .ap-path-tail {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .ap-fp-size {
   flex: 0 0 auto;
+  min-width: 64px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
   font-size: 13px;
   color: var(--text-dim);
 }
 .ap-detail-footer {
   position: relative;
-  padding: 16px 20px 20px;
+  flex: 0 0 auto;
+  padding: 16px 20px 18px;
   border-top: 1px solid var(--hairline);
 }
-.ap-detail-footer .btn { width: 100%; height: 46px; border-radius: var(--radius-pill); }
+.ap-detail-footer .btn { width: 100%; height: 44px; border-radius: var(--radius-pill); }
 .ap-detail-footer .ap-footer-hint {
   margin: 10px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-faint);
   text-align: center;
+  line-height: 1.4;
 }
 .ap-detail-state {
   display: flex;
@@ -373,7 +404,7 @@ const STYLES = `
   align-items: center;
   justify-content: center;
   gap: 12px;
-  height: 100%;
+  padding: 40px 24px;
   color: var(--text-dim);
   text-align: center;
 }
@@ -384,6 +415,7 @@ const STYLES = `
   .ap-hero-art { animation: none; }
   .ap-hero-art::after { animation: none; }
   .ap-panel, .ap-scrim, .ap-card { transition: none; animation: none; }
+  .ap-scrim.is-open .ap-panel { transform: none; }
 }
 `;
 
@@ -429,6 +461,21 @@ function glyph(app: AppInfo): HTMLElement {
   return el;
 }
 
+// Collapse the user's home prefix and split a path into a flexible head and a
+// pinned tail (last 1–2 segments) so the middle ellipsis keeps both ends legible.
+function pathParts(raw: string): { full: string; head: string; tail: string } {
+  const full = raw;
+  const display = raw.replace(/^\/Users\/[^/]+\//, "~/");
+  const segs = display.split("/");
+  const tailCount = Math.min(2, Math.max(1, segs.length - 1));
+  if (segs.length <= tailCount) {
+    return { full, head: "", tail: display };
+  }
+  const tailSegs = segs.slice(segs.length - tailCount);
+  const headSegs = segs.slice(0, segs.length - tailCount);
+  return { full, head: headSegs.join("/") + "/", tail: tailSegs.join("/") };
+}
+
 function stateBlock(title: string, message: string): HTMLElement {
   const el = document.createElement("div");
   el.className = "ap-state";
@@ -459,27 +506,30 @@ export function renderApplications(root: HTMLElement, api: Api): void {
 
   const scrim = document.createElement("div");
   scrim.className = "ap-scrim";
+  scrim.hidden = true;
   const panel = document.createElement("div");
-  panel.className = "ap-panel glass-strong";
+  panel.className = "ap-panel";
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-modal", "true");
   panel.setAttribute("aria-label", "Application details");
-  panel.hidden = true;
+  scrim.appendChild(panel);
 
   function closeDetail(): void {
     footprintToken += 1;
     selected = null;
-    panel.classList.remove("is-open");
     scrim.classList.remove("is-open");
     screen
       .querySelectorAll<HTMLElement>(".ap-card.is-selected")
       .forEach((c) => c.classList.remove("is-selected"));
     window.setTimeout(() => {
-      if (!selected) panel.hidden = true;
-    }, 320);
+      if (!selected) scrim.hidden = true;
+    }, 200);
   }
 
-  scrim.addEventListener("click", closeDetail);
+  // Clicks on the scrim dismiss; clicks inside the modal don't bubble out.
+  scrim.addEventListener("click", (e) => {
+    if (e.target === scrim) closeDetail();
+  });
   document.addEventListener("keydown", function onKey(e) {
     if (!screen.isConnected) {
       document.removeEventListener("keydown", onKey);
@@ -490,6 +540,13 @@ export function renderApplications(root: HTMLElement, api: Api): void {
 
   function renderFootprint(app: AppInfo, fp: Footprint): void {
     panel.innerHTML = "";
+
+    const items = [...fp.items].sort((a, b) => b.size - a.size);
+    const total = items.reduce((sum, it) => sum + it.size, 0);
+
+    // Top region (header + total) does not scroll.
+    const top = document.createElement("div");
+    top.className = "ap-detail-top";
 
     const header = document.createElement("div");
     header.className = "ap-detail-header";
@@ -510,24 +567,27 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     close.addEventListener("click", closeDetail);
     header.append(heading, close);
 
-    const content = document.createElement("div");
-    content.className = "ap-detail-content";
-
-    const items = [...fp.items].sort((a, b) => b.size - a.size);
-    const total = items.reduce((sum, it) => sum + it.size, 0);
-
     const totalRow = document.createElement("div");
     totalRow.className = "ap-total";
-    totalRow.innerHTML = `<span class="ap-total-label">Total footprint</span><span class="ap-total-value">${formatBytes(
+    const count = items.length
+      ? `<span class="ap-total-count">${items.length} item${
+          items.length === 1 ? "" : "s"
+        }</span>`
+      : "";
+    totalRow.innerHTML = `<span class="ap-total-label">Total footprint</span>${count}<span class="ap-total-value">${formatBytes(
       total
     )}</span>`;
-    content.appendChild(totalRow);
+
+    top.append(header, totalRow);
+
+    const content = document.createElement("div");
+    content.className = "ap-detail-content";
 
     if (items.length === 0) {
       const empty = document.createElement("div");
       empty.className = "ap-detail-state";
       empty.innerHTML =
-        '<p>No leftover files were found for this app. Uninstalling will remove the bundle itself.</p>';
+        "<p>No leftover files found — only the app itself.</p>";
       content.appendChild(empty);
     } else {
       const list = document.createElement("div");
@@ -537,8 +597,18 @@ export function renderApplications(root: HTMLElement, api: Api): void {
         row.className = "ap-fp-item";
         const path = document.createElement("span");
         path.className = "ap-fp-path";
-        path.textContent = it.path;
         path.title = it.path;
+        const parts = pathParts(it.path);
+        if (parts.head) {
+          const head = document.createElement("span");
+          head.className = "ap-path-head";
+          head.textContent = parts.head;
+          path.appendChild(head);
+        }
+        const tail = document.createElement("span");
+        tail.className = "ap-path-tail";
+        tail.textContent = parts.tail;
+        path.appendChild(tail);
         const size = document.createElement("span");
         size.className = "ap-fp-size";
         size.textContent = formatBytes(it.size);
@@ -558,12 +628,10 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     const hint = document.createElement("p");
     hint.className = "ap-footer-hint";
     hint.textContent =
-      total > 0
-        ? `Moves the app and ${formatBytes(total)} of leftovers to the Trash.`
-        : "Moves the app to the Trash.";
+      "Moves the app and all listed files to the Trash. You can restore them until you empty it.";
     footer.append(uninstallBtn, hint);
 
-    panel.append(header, content, footer);
+    panel.append(top, content, footer);
   }
 
   async function runUninstall(
@@ -614,7 +682,7 @@ export function renderApplications(root: HTMLElement, api: Api): void {
       .forEach((c) => c.classList.remove("is-selected"));
     cardEl.classList.add("is-selected");
 
-    panel.hidden = false;
+    scrim.hidden = false;
     panel.innerHTML = "";
     const loading = document.createElement("div");
     loading.className = "ap-detail-state";
@@ -624,10 +692,9 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     loading.appendChild(p);
     panel.appendChild(loading);
 
-    // Allow the element to paint before triggering the slide-in transition.
+    // Allow the element to paint before triggering the fade/scale enter.
     requestAnimationFrame(() => {
       scrim.classList.add("is-open");
-      panel.classList.add("is-open");
     });
 
     try {
@@ -637,6 +704,8 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     } catch (err) {
       if (token !== footprintToken) return;
       panel.innerHTML = "";
+      const top = document.createElement("div");
+      top.className = "ap-detail-top";
       const header = document.createElement("div");
       header.className = "ap-detail-header";
       header.appendChild(glyph(app));
@@ -652,6 +721,7 @@ export function renderApplications(root: HTMLElement, api: Api): void {
       close.innerHTML = CLOSE_ICON;
       close.addEventListener("click", closeDetail);
       header.append(heading, close);
+      top.appendChild(header);
 
       const content = document.createElement("div");
       content.className = "ap-detail-content";
@@ -668,7 +738,7 @@ export function renderApplications(root: HTMLElement, api: Api): void {
       });
       block.append(title, msg, retry);
       content.appendChild(block);
-      panel.append(header, content);
+      panel.append(top, content);
     }
   }
 
@@ -792,7 +862,7 @@ export function renderApplications(root: HTMLElement, api: Api): void {
     stage.appendChild(results);
 
     // Detail overlay lives at the screen level so it covers the full content.
-    screen.append(scrim, panel);
+    screen.append(scrim);
 
     renderGrid();
   }
