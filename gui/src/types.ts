@@ -24,6 +24,7 @@ export interface AppInfo {
   path: string;
   id: string;
   name: string;
+  icon: string | null;
 }
 
 export interface FootprintItem {

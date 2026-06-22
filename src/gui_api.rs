@@ -40,6 +40,7 @@ pub struct AppInfo {
     pub path: String,
     pub id: String,
     pub name: String,
+    pub icon: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -135,6 +136,7 @@ pub fn apps() -> Vec<AppInfo> {
     apps::installed_apps()
         .into_iter()
         .map(|a| AppInfo {
+            icon: apps::icon_data_uri(&a.path),
             path: a.path.display().to_string(),
             id: a.id,
             name: a.name,

@@ -184,6 +184,18 @@ const STYLES = `
     0 2px 6px rgba(0, 0, 0, 0.22),
     0 8px 22px var(--glow);
 }
+/* Real bundle icon: let the artwork fill the tile, drop the accent fill/glow. */
+.ap-glyph.has-icon {
+  background: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+.ap-glyph-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+  display: block;
+}
 .ap-name {
   position: relative;
   font-size: 13.5px;
@@ -397,7 +409,23 @@ function glyph(app: AppInfo): HTMLElement {
   const el = document.createElement("div");
   el.className = "ap-glyph";
   el.setAttribute("aria-hidden", "true");
-  el.textContent = initials(app.name);
+  if (app.icon) {
+    el.classList.add("has-icon");
+    const img = document.createElement("img");
+    img.className = "ap-glyph-img";
+    img.src = app.icon;
+    img.alt = "";
+    img.loading = "lazy";
+    img.decoding = "async";
+    // Fall back to initials if the data URI ever fails to decode.
+    img.onerror = () => {
+      el.classList.remove("has-icon");
+      el.textContent = initials(app.name);
+    };
+    el.appendChild(img);
+  } else {
+    el.textContent = initials(app.name);
+  }
   return el;
 }
 

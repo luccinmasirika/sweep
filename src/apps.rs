@@ -71,6 +71,93 @@ fn collect_apps(dir: &Path, apps: &mut Vec<App>, seen: &mut HashSet<PathBuf>, de
     }
 }
 
+/// The bundle's icon as a `data:image/png;base64,…` URI, read straight from its
+/// `.icns`. Modern icns embed PNG entries; we pick a mid-size one (crisp enough
+/// for the grid, small enough to ship inline) and encode it. Returns None for
+/// bundles with no PNG-based icon (e.g. asset-catalog-only apps) so the UI falls
+/// back to initials.
+pub fn icon_data_uri(app: &Path) -> Option<String> {
+    let icns = main_icns(&app.join("Contents/Resources"))?;
+    let bytes = std::fs::read(icns).ok()?;
+    let png = extract_png(&bytes)?;
+    let mut uri = String::from("data:image/png;base64,");
+    base64_into(png, &mut uri);
+    Some(uri)
+}
+
+/// The largest `.icns` in a Resources folder — a reliable proxy for the app's
+/// main icon (document-type icons are smaller).
+fn main_icns(resources: &Path) -> Option<PathBuf> {
+    let mut best: Option<(u64, PathBuf)> = None;
+    for entry in std::fs::read_dir(resources).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("icns") {
+            continue;
+        }
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        if best.as_ref().is_none_or(|(b, _)| size > *b) {
+            best = Some((size, path));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// Pull a PNG entry out of an icns container, preferring mid-size icon types.
+fn extract_png(icns: &[u8]) -> Option<&[u8]> {
+    if icns.len() < 8 || &icns[0..4] != b"icns" {
+        return None;
+    }
+    const PNG_SIG: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
+    // Preference: 128/256 px first — crisp on the grid without a bulky payload.
+    const PREF: [&[u8; 4]; 8] = [
+        b"ic07", b"ic13", b"ic08", b"ic12", b"ic14", b"ic09", b"ic11", b"ic10",
+    ];
+    let mut best: Option<(usize, &[u8])> = None;
+    let mut pos = 8;
+    while pos + 8 <= icns.len() {
+        let ty = &icns[pos..pos + 4];
+        let len = u32::from_be_bytes([icns[pos + 4], icns[pos + 5], icns[pos + 6], icns[pos + 7]])
+            as usize;
+        if len < 8 || pos + len > icns.len() {
+            break;
+        }
+        let data = &icns[pos + 8..pos + len];
+        if data.len() >= 8 && data[0..8] == PNG_SIG {
+            if let Some(rank) = PREF.iter().position(|t| t.as_slice() == ty) {
+                if best.as_ref().is_none_or(|(r, _)| rank < *r) {
+                    best = Some((rank, data));
+                }
+            }
+        }
+        pos += len;
+    }
+    best.map(|(_, data)| data)
+}
+
+/// Standard base64, appended to `out` (avoids a crate for one small encode).
+fn base64_into(data: &[u8], out: &mut String) {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    out.reserve(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let n = ((chunk[0] as u32) << 16)
+            | ((*chunk.get(1).unwrap_or(&0) as u32) << 8)
+            | (*chunk.get(2).unwrap_or(&0) as u32);
+        out.push(ALPHABET[((n >> 18) & 63) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+}
+
 /// Read `CFBundleIdentifier` (lowercased). `defaults read` handles binary plists.
 pub fn bundle_id(app: &Path) -> Option<String> {
     let info = app.join("Contents/Info");
