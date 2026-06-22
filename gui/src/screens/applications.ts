@@ -24,6 +24,18 @@ const STYLES = `
   margin: 0 auto;
   padding: 12px 0 var(--s-6);
 }
+/* Override the global .screen fade-up entrance with an opacity-only fade: its
+   "both" fill keeps a transform: translateY(0), which would make this screen a
+   containing block and trap the fixed detail drawer (.ap-panel) inside the
+   scrolling page. Opacity-only leaves transform: none so the drawer pins to the
+   window. */
+.screen.screen-applications {
+  animation: ap-screen-in var(--t-slow) var(--ease) both;
+}
+@keyframes ap-screen-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 
 /* ---- idle / hero ---- */
 .ap-hero {
