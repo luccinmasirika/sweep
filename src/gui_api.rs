@@ -234,10 +234,10 @@ pub fn doctor_fix() -> ActionResult {
     let mut failures = 0;
 
     for snap in &report.local_snapshots {
-        let Some(date) = fsutil::snapshot_date(snap) else {
+        let Some(id) = fsutil::snapshot_id(snap) else {
             continue;
         };
-        let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), date];
+        let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), id];
         if crate::exec::run(&cmd).is_err() {
             failures += 1;
         }

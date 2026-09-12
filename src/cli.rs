@@ -257,6 +257,16 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
     let mut failures = 0;
 
     if !report.local_snapshots.is_empty() {
+        let staged = report
+            .local_snapshots
+            .iter()
+            .filter(|s| fsutil::is_update_snapshot(s))
+            .count();
+        if staged > 0 {
+            ui::warn(&format!(
+                "{staged} of these hold a staged macOS update — deleting them abandons it"
+            ));
+        }
         let go = fix
             || ui::confirm(&format!(
                 "Delete {} APFS local snapshot(s)?",
@@ -264,10 +274,10 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
             ))?;
         if go {
             for snap in &report.local_snapshots {
-                let Some(date) = fsutil::snapshot_date(snap) else {
+                let Some(id) = fsutil::snapshot_id(snap) else {
                     continue;
                 };
-                let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), date];
+                let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), id];
                 if let Err(e) = exec::run(&cmd) {
                     failures += 1;
                     ui::warn(&format!("{snap}: {e} (try with sudo)"));

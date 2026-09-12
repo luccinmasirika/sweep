@@ -67,11 +67,22 @@ projects that still look active.
 | `xcode`         | DerivedData, device support, simulators, archives, iOS backups.          |
 | `projects`      | Marker-aware home walk: project artifacts (`node_modules`, `target`, `build`…). |
 | `large-items`   | Biggest personal files/folders over a threshold (start unchecked).       |
+| `vm-images`     | Container/VM disk images (Colima, Docker, OrbStack, UTM, Parallels…).     |
+| `heavy`         | Anything over 1 GB anywhere under `~`, by size alone — no name needed.    |
 | `privacy`       | Browser caches (safe) + cookies/history (start unchecked) + Mail downloads. |
 | `leftovers`     | Support files of uninstalled apps (opt-in; heuristic, starts unchecked). |
 
 Nothing is hard-coded to a particular machine: detectors resolve known paths
 relative to your home and discover the rest by scanning.
+
+`heavy` is the one that answers "my disk is full and I can't see why". Every
+other detector recognises a name it was taught; this one only follows bytes, so
+a one-off `.migration-staging` folder, a tool's browser recordings, or a 4 GB
+model file inside an app's support directory show up like anything else. It
+reports the folder that best describes each item — climbing out of a chain of
+single-child directories, but never as far as a folder that just holds many
+unrelated things — and skips whatever another detector already lists, so the
+same gigabytes never appear twice. Everything it finds starts unchecked.
 
 The `projects` walk skips version-manager and toolchain roots (`~/.nvm`,
 `~/.fnm`, `~/.volta`, `~/.asdf`, `~/.cargo`, `~/.rustup`, …) so a global
@@ -88,9 +99,18 @@ prunes Docker volumes — this destroys volume data, so it is never on by defaul
 
 ### Doctor
 
-`sweep doctor` is read-only. It reports free space, APFS local snapshots, and
-the heaviest `~/Library` folders, which is usually where the opaque "System
-Data" hides.
+`sweep doctor` is read-only. It reports the whole APFS container volume by
+volume — Data, Preboot, System, VM, Recovery all share one pool, so `df` on a
+single mount never shows the real picture — plus purgeable space, APFS local
+snapshots and the heaviest `~/Library` folders.
+
+It also flags a **stalled macOS update**: an update that was staged and never
+finished leaves the system volume's seal broken, tens of gigabytes parked in
+Preboot, an installer in `/Library/Updates`, and `com.apple.os.update-*`
+snapshots pinning blocks. None of it is a file you can find in the Finder, and
+it is a common reason a Mac is full with nothing large on it. Finish the update
+in System Settings, or let `sweep doctor --fix` drop the snapshots to abandon
+it.
 
 ## Configuration
 

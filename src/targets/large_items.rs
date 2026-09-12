@@ -33,7 +33,7 @@ impl Target for LargeItems {
                 // lstat, not stat: never follow a symlink into its target and
                 // never materialise an evicted iCloud file just by sizing it.
                 let Ok(meta) = entry.metadata() else { continue };
-                if is_dataless(&meta) {
+                if fsutil::is_dataless(&meta) {
                     continue;
                 }
                 let size = if meta.is_dir() {
@@ -70,20 +70,4 @@ fn older_than(meta: &fs::Metadata, age: Duration) -> bool {
         .duration_since(modified)
         .map(|elapsed| elapsed > age)
         .unwrap_or(false)
-}
-
-/// An iCloud file evicted from local storage: it reports its full size but
-/// holds almost nothing on disk, and deleting the placeholder would remove the
-/// real file from the cloud. Checked via `lstat` flags so we don't trigger a
-/// download.
-#[cfg(target_os = "macos")]
-fn is_dataless(meta: &fs::Metadata) -> bool {
-    use std::os::macos::fs::MetadataExt;
-    const SF_DATALESS: u32 = 0x4000_0000;
-    meta.st_flags() & SF_DATALESS != 0
-}
-
-#[cfg(not(target_os = "macos"))]
-fn is_dataless(_: &fs::Metadata) -> bool {
-    false
 }

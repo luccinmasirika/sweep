@@ -9,6 +9,8 @@ xcode = true
 projects = true
 large_items = true
 privacy = true
+vm_images = true
+heavy = true
 # Leftovers (support files of uninstalled apps) is heuristic, so it is opt-in.
 leftovers = false
 
@@ -34,6 +36,10 @@ extra_large_roots = []
 
 # A personal item must be at least this big to be listed (bytes).
 large_min_bytes = 500000000
+
+# The `heavy` scan reports anything at least this big, wherever it lives and
+# whatever it is called — raise it if the list is too long to read (bytes).
+heavy_min_bytes = 1000000000
 
 # Build/cache dirs below this are ignored to keep the list signal-heavy (bytes).
 min_dir_bytes = 1000000

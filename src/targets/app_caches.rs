@@ -10,7 +10,8 @@ pub struct AppCaches;
 
 /// Directory names apps use for throwaway caches, matched wherever they sit so
 /// the scan works for any app without hard-coding a list of apps.
-const CACHE_NAMES: &[&str] = &["Cache", "Caches", "GPUCache", "Code Cache", "CachedData"];
+pub(crate) const CACHE_NAMES: &[&str] =
+    &["Cache", "Caches", "GPUCache", "Code Cache", "CachedData"];
 
 impl Target for AppCaches {
     fn name(&self) -> &'static str {

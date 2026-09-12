@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -46,11 +46,26 @@ impl Target for DevTools {
         }
 
         if exec::command_exists("pnpm") {
-            f.push(command_finding("pnpm store", &["pnpm", "store", "prune"]));
+            let active = store_path(&["pnpm", "store", "path"]);
+            let size = active.as_deref().map(fsutil::dir_size).unwrap_or(0);
+            f.push(
+                sized_finding("pnpm store", size, &["pnpm", "store", "prune"]).with_note("pnpm"),
+            );
+            // `pnpm store prune` only knows about the store the current pnpm
+            // uses; a major upgrade leaves the previous `store/vN` behind,
+            // whole, forever, and nothing ever looks at it again.
+            f.extend(abandoned_stores(active.as_deref()));
         }
 
         if exec::command_exists("yarn") {
-            f.push(command_finding("yarn cache", &["yarn", "cache", "clean"]));
+            f.push(
+                sized_finding(
+                    "yarn cache",
+                    cache_size(&["yarn", "cache", "dir"]),
+                    &["yarn", "cache", "clean"],
+                )
+                .with_note("yarn"),
+            );
         }
 
         let cargo_cache = cfg.home.join(".cargo/registry/cache");
@@ -95,7 +110,25 @@ impl Target for DevTools {
         }
 
         if exec::command_exists("bun") {
-            f.push(command_finding("bun cache", &["bun", "pm", "cache", "rm"]));
+            f.push(
+                sized_finding(
+                    "bun cache",
+                    fsutil::dir_size(&cfg.home.join(".bun/install/cache")),
+                    &["bun", "pm", "cache", "rm"],
+                )
+                .with_note("bun"),
+            );
+        }
+
+        if exec::command_exists("deno") {
+            f.push(
+                sized_finding(
+                    "deno cache",
+                    fsutil::dir_size(&cfg.home.join("Library/Caches/deno")),
+                    &["deno", "clean"],
+                )
+                .with_note("deno"),
+            );
         }
 
         if exec::command_exists("uv") {
@@ -150,13 +183,58 @@ fn command_finding(label: &str, cmd: &[&str]) -> Finding {
     Finding::dir(PathBuf::from(label), 0, CleanAction::Command(words(cmd)))
 }
 
+/// A cleanup run through a tool's own CLI, but weighed first. Without the size
+/// these land at the bottom of a list sorted by bytes, so a 5 GB package store
+/// reads as nothing to clean.
+fn sized_finding(label: &str, size: u64, cmd: &[&str]) -> Finding {
+    Finding::dir(PathBuf::from(label), size, CleanAction::Command(words(cmd)))
+}
+
+/// Size of the directory a tool reports as its cache (`pnpm store path`,
+/// `yarn cache dir`, …). Missing tool or missing directory reads as zero.
 fn cache_size(query: &[&str]) -> u64 {
+    store_path(query)
+        .as_deref()
+        .map(fsutil::dir_size)
+        .unwrap_or(0)
+}
+
+/// The directory a tool prints as its cache location, if it exists.
+fn store_path(query: &[&str]) -> Option<PathBuf> {
     exec::capture(&words(query))
         .ok()
         .map(|p| PathBuf::from(p.trim()))
         .filter(|p| p.is_dir())
-        .map(|p| fsutil::dir_size(&p))
-        .unwrap_or(0)
+}
+
+/// Sibling store versions next to the one in use. Each is a complete package
+/// store an older pnpm left behind, and no pnpm command will ever touch it.
+fn abandoned_stores(active: Option<&Path>) -> Vec<Finding> {
+    let Some(active) = active else {
+        return Vec::new();
+    };
+    let Some(parent) = active.parent() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == active || !path.is_dir() {
+            continue;
+        }
+        let size = fsutil::dir_size(&path);
+        if size == 0 {
+            continue;
+        }
+        out.push(
+            Finding::dir(path, size, CleanAction::RemovePath)
+                .with_note("store left behind by an older pnpm"),
+        );
+    }
+    out
 }
 
 fn brew_reclaimable() -> Option<String> {

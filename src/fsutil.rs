@@ -138,6 +138,22 @@ pub fn empty_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// An iCloud file evicted from local storage: it reports its full size but
+/// holds almost nothing on disk, and deleting the placeholder would remove the
+/// real file from the cloud. Read from `lstat` flags so checking it never
+/// triggers a download.
+#[cfg(target_os = "macos")]
+pub fn is_dataless(meta: &fs::Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    const SF_DATALESS: u32 = 0x4000_0000;
+    meta.st_flags() & SF_DATALESS != 0
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn is_dataless(_: &fs::Metadata) -> bool {
+    false
+}
+
 /// Every Trash this user can empty: the home Trash plus the per-user trash on
 /// each mounted volume (`/Volumes/<v>/.Trashes/<uid>`).
 pub fn all_trashes() -> Vec<PathBuf> {
@@ -161,15 +177,25 @@ pub fn all_trashes() -> Vec<PathBuf> {
 
 /// Available bytes on the root volume, parsed from `df -k /`.
 pub fn free_space_root() -> Option<u64> {
-    let out = crate::exec::capture(&["df".into(), "-k".into(), "/".into()]).ok()?;
-    let avail_kb: u64 = out
-        .lines()
-        .nth(1)?
-        .split_whitespace()
-        .nth(3)?
-        .parse()
-        .ok()?;
-    Some(avail_kb * 1024)
+    df(Path::new("/")).map(|d| d.avail)
+}
+
+/// What `df -k` reports for one mount point.
+pub struct Df {
+    pub used: u64,
+    pub avail: u64,
+}
+
+fn df(mount: &Path) -> Option<Df> {
+    let out =
+        crate::exec::capture(&["df".into(), "-k".into(), mount.display().to_string()]).ok()?;
+    let mut cols = out.lines().nth(1)?.split_whitespace().skip(2);
+    let used: u64 = cols.next()?.parse().ok()?;
+    let avail: u64 = cols.next()?.parse().ok()?;
+    Some(Df {
+        used: used * 1024,
+        avail: avail * 1024,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -178,38 +204,208 @@ pub struct DirUsage {
     pub size: u64,
 }
 
+/// One APFS volume inside the container: its role (`Data`, `Preboot`, `VM`…)
+/// and the bytes it actually consumes out of the shared pool.
+#[derive(Debug, Serialize)]
+pub struct VolumeUsage {
+    pub role: String,
+    pub name: String,
+    pub consumed: u64,
+}
+
+/// The APFS container holding `/`. Every volume shares one free-space pool, so
+/// this — not `df` on a single mount — is the only honest picture of the disk.
+#[derive(Debug, Serialize)]
+pub struct Container {
+    pub capacity: u64,
+    pub used: u64,
+    pub free: u64,
+    pub volumes: Vec<VolumeUsage>,
+    /// The System volume's seal. `Broken` means a macOS update was staged and
+    /// never finalised, which strands gigabytes in Preboot and snapshots.
+    pub seal_broken: bool,
+}
+
+impl Container {
+    fn volume(&self, role: &str) -> Option<&VolumeUsage> {
+        self.volumes.iter().find(|v| v.role == role)
+    }
+}
+
+/// A macOS update that was downloaded and staged but never completed. It holds
+/// space in three places at once and none of it shows up as a file you can see.
+#[derive(Debug, Serialize)]
+pub struct StalledUpdate {
+    pub seal_broken: bool,
+    /// `com.apple.os.update-*` snapshots, which are not Time Machine backups.
+    /// They pin blocks the filesystem cannot report a size for.
+    pub update_snapshots: Vec<String>,
+    /// What Preboot carries beyond a healthy baseline.
+    pub preboot_bytes: u64,
+    /// The downloaded installer still sitting in `/Library/Updates`.
+    pub updates_bytes: u64,
+}
+
+impl StalledUpdate {
+    /// Only what can be measured without double counting. The snapshots hold
+    /// more on top, and nothing can size those.
+    pub fn total(&self) -> u64 {
+        self.preboot_bytes + self.updates_bytes
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Diagnosis {
     pub free_space: Option<u64>,
     pub local_snapshots: Vec<String>,
     pub library_dirs: Vec<DirUsage>,
+    pub container: Option<Container>,
+    /// Blocks APFS charges the Data volume that `df` no longer counts as used:
+    /// space pinned by snapshots. Usually small, and zero on a healthy disk.
+    pub purgeable: Option<u64>,
+    pub stalled_update: Option<StalledUpdate>,
 }
 
-/// Pull the `YYYY-MM-DD-HHMMSS` token out of a `tmutil listlocalsnapshots`
-/// line (e.g. `com.apple.TimeMachine.2024-06-19-120000.local`) so it can be
-/// passed to `tmutil deletelocalsnapshots`.
-pub fn snapshot_date(line: &str) -> Option<String> {
-    line.split('.')
-        .find(|tok| {
-            tok.starts_with("20")
-                && tok.len() == 17
-                && tok.chars().all(|c| c.is_ascii_digit() || c == '-')
+/// The token `tmutil deletelocalsnapshots` accepts for a snapshot: the
+/// `YYYY-MM-DD-HHMMSS` stamp for a Time Machine snapshot
+/// (`com.apple.TimeMachine.2024-06-19-120000.local`), and the whole name for
+/// everything else — update snapshots like `com.apple.os.update-<hash>` carry
+/// no date, and passing them by name is the only way to delete them.
+pub fn snapshot_id(line: &str) -> Option<String> {
+    let line = line.trim();
+    if !line.starts_with("com.apple") {
+        return None;
+    }
+    let date = line.split('.').find(|tok| {
+        tok.starts_with("20")
+            && tok.len() == 17
+            && tok.chars().all(|c| c.is_ascii_digit() || c == '-')
+    });
+    Some(date.unwrap_or(line).to_string())
+}
+
+/// True for the snapshots macOS leaves behind when an update is staged. They
+/// look like Time Machine snapshots to `tmutil` but have nothing to do with
+/// backups, and deleting them is how the staged update is abandoned.
+pub fn is_update_snapshot(line: &str) -> bool {
+    line.contains("com.apple.os.update") || line.contains("MSUPrepareUpdate")
+}
+
+fn local_snapshots() -> Vec<String> {
+    crate::exec::capture(&["tmutil".into(), "listlocalsnapshots".into(), "/".into()])
+        .map(|out| {
+            out.lines()
+                .map(str::trim)
+                .filter(|l| l.starts_with("com.apple"))
+                .map(str::to_string)
+                .collect()
         })
-        .map(str::to_string)
+        .unwrap_or_default()
 }
 
-/// Read-only snapshot of where space is going: free space, APFS local
-/// snapshots, and the heaviest sub-directories of `~/Library`.
+/// Parse `diskutil apfs list`, keeping the container that holds the Data volume
+/// mounted at `/System/Volumes/Data` — a Mac can have several containers
+/// (external disks, VM images) and only one of them is the startup disk.
+fn parse_container(out: &str) -> Option<Container> {
+    for block in out.split("+-- Container ").skip(1) {
+        if !block.contains("/System/Volumes/Data") {
+            continue;
+        }
+        let mut c = Container {
+            capacity: field_bytes(block, "Size (Capacity Ceiling):")?,
+            used: field_bytes(block, "Capacity In Use By Volumes:")?,
+            free: field_bytes(block, "Capacity Not Allocated:").unwrap_or(0),
+            volumes: Vec::new(),
+            seal_broken: false,
+        };
+        for vol in block.split("+-> Volume ").skip(1) {
+            let Some(consumed) = field_bytes(vol, "Capacity Consumed:") else {
+                continue;
+            };
+            let role = field(vol, "APFS Volume Disk (Role):")
+                .and_then(|v| {
+                    v.split_once('(')
+                        .map(|(_, r)| r.trim_end_matches(')').to_string())
+                })
+                .unwrap_or_default();
+            let name = field(vol, "Name:")
+                .map(|n| n.split(" (").next().unwrap_or(&n).to_string())
+                .unwrap_or_default();
+            if role == "System" && field(vol, "Sealed:").as_deref() == Some("Broken") {
+                c.seal_broken = true;
+            }
+            c.volumes.push(VolumeUsage {
+                role,
+                name,
+                consumed,
+            });
+        }
+        c.volumes.sort_by(|a, b| b.consumed.cmp(&a.consumed));
+        return Some(c);
+    }
+    None
+}
+
+/// Value of a `Label:   value` line in a `diskutil` block.
+fn field(block: &str, label: &str) -> Option<String> {
+    block
+        .lines()
+        .find_map(|l| l.trim_start_matches(['|', ' ']).strip_prefix(label))
+        .map(|v| v.trim().to_string())
+}
+
+/// `diskutil` prints sizes as `179942858752 B (179.9 GB)`; take the exact byte
+/// count, not the rounded human figure.
+fn field_bytes(block: &str, label: &str) -> Option<u64> {
+    field(block, label)?.split_whitespace().next()?.parse().ok()
+}
+
+fn apfs_container() -> Option<Container> {
+    let out = crate::exec::capture(&["diskutil".into(), "apfs".into(), "list".into()]).ok()?;
+    parse_container(&out)
+}
+
+/// Look for a macOS update that was staged and left unfinished. Any one of the
+/// three signals alone is normal noise; together they are the reason tens of
+/// gigabytes are missing with no large file in sight.
+fn stalled_update(container: Option<&Container>) -> Option<StalledUpdate> {
+    let snapshots: Vec<String> = local_snapshots()
+        .into_iter()
+        .filter(|s| is_update_snapshot(s))
+        .collect();
+    let seal_broken = container.is_some_and(|c| c.seal_broken);
+    let preboot = container
+        .and_then(|c| c.volume("Preboot"))
+        .map(|v| v.consumed)
+        .unwrap_or(0);
+    // A healthy Preboot is a couple of GB; past that it is holding a staged
+    // system. Only the excess is attributed, and the installer sitting inside
+    // Preboot is deliberately not measured on its own — it is already in there.
+    const PREBOOT_NORMAL: u64 = 4_000_000_000;
+    if !seal_broken && snapshots.is_empty() && preboot <= PREBOOT_NORMAL {
+        return None;
+    }
+    Some(StalledUpdate {
+        seal_broken,
+        update_snapshots: snapshots,
+        preboot_bytes: preboot.saturating_sub(PREBOOT_NORMAL),
+        updates_bytes: dir_size(Path::new("/Library/Updates")),
+    })
+}
+
+/// Read-only snapshot of where space is going: the APFS container volume by
+/// volume, purgeable space, a stalled macOS update, local snapshots, and the
+/// heaviest sub-directories of `~/Library`.
 pub fn diagnose() -> Diagnosis {
-    let local_snapshots =
-        crate::exec::capture(&["tmutil".into(), "listlocalsnapshots".into(), "/".into()])
-            .map(|out| {
-                out.lines()
-                    .filter(|l| l.contains("com.apple"))
-                    .map(|l| l.trim().to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
+    let container = apfs_container();
+
+    // What APFS charges the Data volume, minus what `df` says is in use there:
+    // blocks held by snapshots and caches that macOS calls "purgeable".
+    let purgeable = container
+        .as_ref()
+        .and_then(|c| c.volume("Data"))
+        .zip(df(Path::new("/System/Volumes/Data")))
+        .map(|(vol, df)| vol.consumed.saturating_sub(df.used));
 
     let mut library_dirs = Vec::new();
     if let Some(lib) = dirs::home_dir().map(|h| h.join("Library")) {
@@ -237,8 +433,11 @@ pub fn diagnose() -> Diagnosis {
 
     Diagnosis {
         free_space: free_space_root(),
-        local_snapshots,
+        local_snapshots: local_snapshots(),
         library_dirs,
+        stalled_update: stalled_update(container.as_ref()),
+        purgeable,
+        container,
     }
 }
 
@@ -275,12 +474,76 @@ mod tests {
     }
 
     #[test]
-    fn parses_snapshot_date() {
+    fn snapshot_id_falls_back_to_the_whole_name() {
         assert_eq!(
-            snapshot_date("com.apple.TimeMachine.2024-06-19-120000.local").as_deref(),
+            snapshot_id("com.apple.TimeMachine.2024-06-19-120000.local").as_deref(),
             Some("2024-06-19-120000")
         );
-        assert_eq!(snapshot_date("garbage line").as_deref(), None);
+        // Update snapshots carry no date, so the name itself is the handle.
+        let update = "com.apple.os.update-MSUPrepareUpdate";
+        assert_eq!(snapshot_id(update).as_deref(), Some(update));
+        assert!(is_update_snapshot(update));
+        assert!(!is_update_snapshot(
+            "com.apple.TimeMachine.2024-06-19-120000.local"
+        ));
+        assert_eq!(snapshot_id("garbage line").as_deref(), None);
+    }
+
+    const APFS_LIST: &str = "APFS Containers (2 found)
+|
++-- Container disk1 AAAA
+    Size (Capacity Ceiling):      100000000000 B (100.0 GB)
+    Capacity In Use By Volumes:   1000000000 B (1.0 GB)
+    Capacity Not Allocated:       99000000000 B (99.0 GB)
+    |
+    +-> Volume disk1s1 BBBB
+        APFS Volume Disk (Role):   disk1s1 (Data)
+        Name:                      Elsewhere (Case-insensitive)
+        Mount Point:               /Volumes/Elsewhere
+        Capacity Consumed:         1000000000 B (1.0 GB)
+|
++-- Container disk3 CCCC
+    Size (Capacity Ceiling):      245107195904 B (245.1 GB)
+    Capacity In Use By Volumes:   227290148864 B (227.3 GB) (92.7% used)
+    Capacity Not Allocated:       17817047040 B (17.8 GB) (7.3% free)
+    |
+    +-> Volume disk3s1 DDDD
+    |   APFS Volume Disk (Role):   disk3s1 (System)
+    |   Name:                      Macintosh HD (Case-insensitive)
+    |   Capacity Consumed:         17086660608 B (17.1 GB)
+    |   Sealed:                    Broken
+    |
+    +-> Volume disk3s2 EEEE
+    |   APFS Volume Disk (Role):   disk3s2 (Preboot)
+    |   Name:                      Preboot (Case-insensitive)
+    |   Capacity Consumed:         18041266176 B (18.0 GB)
+    |   Sealed:                    No
+    |
+    +-> Volume disk3s5 FFFF
+        APFS Volume Disk (Role):   disk3s5 (Data)
+        Name:                      Data (Case-insensitive)
+        Mount Point:               /System/Volumes/Data
+        Capacity Consumed:         179942858752 B (179.9 GB)
+        Sealed:                    No
+";
+
+    #[test]
+    fn parses_the_startup_container_only() {
+        let c = parse_container(APFS_LIST).expect("container");
+        assert_eq!(c.capacity, 245_107_195_904);
+        assert_eq!(c.used, 227_290_148_864);
+        assert_eq!(c.free, 17_817_047_040);
+        // The external container must not win just by coming first.
+        assert_eq!(c.volume("Data").unwrap().consumed, 179_942_858_752);
+        assert_eq!(c.volume("Preboot").unwrap().consumed, 18_041_266_176);
+        // Volumes are sorted heaviest first, and the broken seal is picked up.
+        assert_eq!(c.volumes[0].role, "Data");
+        assert!(c.seal_broken);
+    }
+
+    #[test]
+    fn no_container_when_data_volume_is_absent() {
+        assert!(parse_container("APFS Containers (0 found)\n").is_none());
     }
 
     #[test]

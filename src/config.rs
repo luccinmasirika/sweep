@@ -15,6 +15,10 @@ pub struct Config {
     pub projects: bool,
     pub large_items: bool,
     pub privacy: bool,
+    /// Container/VM disk images, which grow silently and never shrink back.
+    pub vm_images: bool,
+    /// Name-agnostic sweep for the heaviest items anywhere under `home`.
+    pub heavy: bool,
     /// Off by default: leftovers detection is heuristic, so it is opt-in.
     pub leftovers: bool,
 
@@ -27,6 +31,9 @@ pub struct Config {
     pub extra_large_roots: Vec<PathBuf>,
 
     pub large_min_bytes: u64,
+    /// Floor for the name-agnostic `heavy` scan. High enough that only things
+    /// worth explaining show up.
+    pub heavy_min_bytes: u64,
     /// Build/cache dirs smaller than this are ignored, to keep the list signal-heavy.
     pub min_dir_bytes: u64,
     pub downloads_stale_days: u64,
@@ -49,12 +56,15 @@ impl Default for Config {
             projects: true,
             large_items: true,
             privacy: true,
+            vm_images: true,
+            heavy: true,
             leftovers: false,
             home: dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
             exclude: Vec::new(),
             project_dir_names: default_project_dir_names(),
             extra_large_roots: Vec::new(),
             large_min_bytes: 500 * 1_000_000,
+            heavy_min_bytes: 1_000_000_000,
             min_dir_bytes: 1_000_000,
             downloads_stale_days: 90,
             projects_stale_days: 30,

@@ -43,6 +43,48 @@ fn resolve(home: &Path, entries: &[Entry]) -> Vec<Finding> {
     out
 }
 
+/// Prefixes another target already reports on. The name-agnostic scan counts
+/// them towards a folder's weight but never lists them itself, so the same
+/// gigabytes never show up under two headings.
+pub fn covered_roots(home: &Path) -> Vec<std::path::PathBuf> {
+    [
+        // system-caches, privacy
+        "Library/Caches",
+        "Library/Logs",
+        ".Trash",
+        // xcode
+        "Library/Developer",
+        "Library/Application Support/MobileSync",
+        // dev-tools
+        "Library/pnpm",
+        "Library/Android",
+        ".npm",
+        ".cargo",
+        ".m2",
+        ".gradle",
+        ".pub-cache",
+        ".nuget",
+        ".bun",
+        ".deno",
+        "go/pkg/mod",
+        // vm-images
+        ".colima",
+        ".lima",
+        ".orbstack",
+        "OrbStack",
+        ".rd",
+        ".docker",
+        "Library/Containers/com.docker.docker",
+        "Library/Containers/com.utmapp.UTM",
+        "Parallels",
+        "VirtualBox VMs",
+        "Virtual Machines.localized",
+    ]
+    .iter()
+    .map(|rel| home.join(rel))
+    .collect()
+}
+
 pub fn system_caches(cfg: &Config) -> Vec<Finding> {
     resolve(
         &cfg.home,

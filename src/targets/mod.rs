@@ -46,11 +46,13 @@ const MARKER_KINDS: &[ProjectKind] = &[
 
 pub mod app_caches;
 pub mod dev_tools;
+pub mod heavy;
 pub mod large_items;
 pub mod leftovers;
 pub mod privacy;
 pub mod projects;
 pub mod system_caches;
+pub mod vm_images;
 pub mod xcode;
 
 pub trait Target {
@@ -68,6 +70,8 @@ pub fn all() -> Vec<Box<dyn Target + Send + Sync>> {
         Box::new(privacy::Privacy),
         Box::new(projects::Projects),
         Box::new(large_items::LargeItems),
+        Box::new(vm_images::VmImages),
+        Box::new(heavy::Heavy),
         Box::new(leftovers::Leftovers),
     ]
 }
@@ -191,7 +195,7 @@ fn has_marker(children: &HashSet<String>, marker: &str) -> bool {
 
 /// macOS bundles look like a single document in Finder but are directories the
 /// owning app must manage; a cleanup walk should treat them as opaque.
-fn is_bundle(name: &str) -> bool {
+pub(crate) fn is_bundle(name: &str) -> bool {
     const EXTS: &[&str] = &[
         ".app",
         ".photoslibrary",

@@ -57,6 +57,8 @@ fn icon(target: &str) -> &'static str {
         "xcode" => "🔨",
         "projects" => "🏗 ",
         "large-items" => "📄",
+        "vm-images" => "💽",
+        "heavy" => "🗻",
         "leftovers" => "👻",
         "privacy" => "🕵 ",
         _ => "•",
@@ -128,29 +130,55 @@ pub fn print_report(report: &Report) {
             format!("… and {} more ({})", count - shown, human(rest)).dimmed()
         );
     }
-    println!(
-        "  {} {}",
-        " ".repeat(10),
-        format!("↳ reclaimable {}", human(report.reclaimable())).dimmed()
-    );
+    // Personal items are excluded from "reclaimable" on purpose, but a target
+    // made only of them must not read as an empty result — the bytes are real,
+    // they just need a deliberate tick.
+    let reclaimable = report.reclaimable();
+    let found = report.total_size();
+    let tail = if found > reclaimable {
+        format!(
+            "↳ reclaimable {} · {} found, yours to pick from",
+            human(reclaimable),
+            human(found)
+        )
+    } else {
+        format!("↳ reclaimable {}", human(reclaimable))
+    };
+    println!("  {} {}", " ".repeat(10), tail.dimmed());
 }
 
 pub fn print_summary(reports: &[Report]) {
     let total: u64 = reports.iter().map(|r| r.reclaimable()).sum();
+    let found: u64 = reports.iter().map(|r| r.total_size()).sum();
     println!();
     println!("{}", "Summary".bold().underline());
+    println!(
+        "  {:<17}{:>12}{:>14}",
+        "".dimmed(),
+        "reclaimable".dimmed(),
+        "found".dimmed()
+    );
     for r in reports {
         println!(
-            "  {} {:<14} {}",
+            "  {} {:<14} {}  {}",
             icon(&r.target),
             r.target,
-            size_cell(r.reclaimable(), 12)
+            size_cell(r.reclaimable(), 12),
+            size_cell(r.total_size(), 12)
         );
     }
-    println!("  {}", "─".repeat(30).dimmed());
-    println!("     {:<14} {}", "total", size_cell(total, 12).bold());
+    println!("  {}", "─".repeat(44).dimmed());
+    println!(
+        "     {:<14} {}  {}",
+        "total",
+        size_cell(total, 12).bold(),
+        size_cell(found, 12).bold()
+    );
     println!();
-    println!("{}", "Run `sweep clean` to free this space.".dimmed());
+    println!(
+        "{}",
+        "Run `sweep clean` to free the reclaimable part; the rest is yours to tick.".dimmed()
+    );
 }
 
 pub fn clean_progress(len: u64) -> ProgressBar {
@@ -276,8 +304,67 @@ pub fn print_doctor(d: &crate::fsutil::Diagnosis) {
     println!();
     println!("{}", "Disk doctor".bold().underline());
 
-    if let Some(free) = d.free_space {
+    if let Some(c) = &d.container {
+        println!("  {}", "APFS container".dimmed());
+        println!("  capacity      {}", human(c.capacity).bold());
+        println!("  in use        {}", size_cell(c.used, 0));
+        println!("  free          {}", human(c.free).bold());
+        for vol in &c.volumes {
+            println!(
+                "    {}  {}",
+                size_cell(vol.consumed, 10),
+                format!("{} ({})", vol.name, vol.role).dimmed()
+            );
+        }
+    } else if let Some(free) = d.free_space {
         println!("  free on /     {}", human(free).bold());
+    }
+
+    if let Some(purgeable) = d.purgeable.filter(|p| *p > 0) {
+        println!();
+        println!("{}", "Purgeable".bold());
+        println!("  {}", size_cell(purgeable, 10));
+        println!(
+            "  {}",
+            "pinned by snapshots — why the Finder and `df` disagree".dimmed()
+        );
+    }
+
+    if let Some(u) = &d.stalled_update {
+        println!();
+        println!("{} {}", "Stalled macOS update".bold(), "⚠".yellow());
+        if u.seal_broken {
+            println!(
+                "  {}",
+                "the system volume seal is broken: an update was staged and never finished"
+                    .yellow()
+            );
+        }
+        for (label, bytes) in [
+            ("Preboot holding the staged system", u.preboot_bytes),
+            ("downloaded installer in /Library/Updates", u.updates_bytes),
+        ] {
+            if bytes > 0 {
+                println!("  {}  {}", size_cell(bytes, 10), label.dimmed());
+            }
+        }
+        if !u.update_snapshots.is_empty() {
+            println!(
+                "  {}  {}",
+                format!("{:>10}", u.update_snapshots.len()).dimmed(),
+                "update snapshot(s) pinning blocks".dimmed()
+            );
+        }
+        println!(
+            "  {}  {}",
+            size_cell(u.total(), 10),
+            "measurable total — the snapshots hold more".bold()
+        );
+        println!(
+            "  {}",
+            "fix: finish the update in System Settings, or run `sweep doctor --fix` to drop it"
+                .dimmed()
+        );
     }
 
     println!();
@@ -286,12 +373,13 @@ pub fn print_doctor(d: &crate::fsutil::Diagnosis) {
         println!("  {}", "none".dimmed());
     } else {
         for snap in &d.local_snapshots {
-            println!("  {snap}");
+            let tag = if crate::fsutil::is_update_snapshot(snap) {
+                " (staged update)".yellow().to_string()
+            } else {
+                String::new()
+            };
+            println!("  {snap}{tag}");
         }
-        println!(
-            "  {}",
-            "tip: `tmutil deletelocalsnapshots <date>` to remove".dimmed()
-        );
     }
 
     println!();
@@ -307,7 +395,7 @@ pub fn print_doctor(d: &crate::fsutil::Diagnosis) {
     println!();
     println!(
         "{}",
-        "Run `sweep clean` for caches & dev junk, or `sweep clean --aggressive` to go further."
+        "Run `sweep scan` to see the heaviest items by name, or `sweep clean` to free caches."
             .dimmed()
     );
 }
