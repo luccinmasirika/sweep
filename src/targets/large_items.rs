@@ -21,11 +21,18 @@ impl Target for LargeItems {
 
     fn scan(&self, cfg: &Config) -> Result<Report> {
         let stale = Duration::from_secs(cfg.downloads_stale_days * 86_400);
+        let mut report = Report::new(self.name());
         let mut findings = Vec::new();
 
         for root in cfg.large_roots() {
             let entries = match fs::read_dir(&root) {
                 Ok(e) => e,
+                // Desktop and Documents sit behind their own privacy prompt;
+                // a refusal there hides everything the user cares about most.
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    report.unreadable.push(root);
+                    continue;
+                }
                 Err(_) => continue,
             };
             for entry in entries.flatten() {
@@ -36,16 +43,20 @@ impl Target for LargeItems {
                 if fsutil::is_dataless(&meta) {
                     continue;
                 }
-                let size = if meta.is_dir() {
-                    fsutil::dir_size(&path)
+                let usage = if meta.is_dir() {
+                    fsutil::dir_usage(&path)
                 } else {
-                    meta.len()
+                    fsutil::Usage {
+                        bytes: meta.len(),
+                        unreadable: false,
+                    }
                 };
-                if size < cfg.large_min_bytes {
+                if usage.bytes < cfg.large_min_bytes {
                     continue;
                 }
-                let mut finding =
-                    Finding::dir(path.clone(), size, CleanAction::RemovePath).risky(true);
+                let mut finding = Finding::dir(path.clone(), usage.bytes, CleanAction::RemovePath)
+                    .risky(true)
+                    .unreadable(usage.unreadable);
                 if older_than(&meta, stale) {
                     finding =
                         finding.with_note(format!("untouched > {}d", cfg.downloads_stale_days));
@@ -55,7 +66,6 @@ impl Target for LargeItems {
         }
 
         findings.sort_by(|a, b| b.size.cmp(&a.size));
-        let mut report = Report::new(self.name());
         report.findings = findings;
         Ok(report)
     }

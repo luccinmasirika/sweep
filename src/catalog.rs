@@ -25,15 +25,17 @@ fn resolve(home: &Path, entries: &[Entry]) -> Vec<Finding> {
         if !path.is_dir() {
             continue;
         }
-        let size = fsutil::dir_size(&path);
-        if size == 0 {
+        let usage = fsutil::dir_usage(&path);
+        if usage.bytes == 0 && !usage.unreadable {
             continue;
         }
         let action = match e.action {
             Action::Empty => CleanAction::EmptyDir,
             Action::Remove => CleanAction::RemovePath,
         };
-        let mut finding = Finding::dir(path, size, action).risky(e.risky);
+        let mut finding = Finding::dir(path, usage.bytes, action)
+            .risky(e.risky)
+            .unreadable(usage.unreadable);
         if let Some(note) = e.note {
             finding = finding.with_note(note);
         }
@@ -258,7 +260,31 @@ pub fn xcode(cfg: &Config) -> Vec<Finding> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_refused_trash_stays_in_the_report() {
+        let home = tempfile::tempdir().unwrap();
+        let trash = home.path().join(".Trash");
+        fs::create_dir(&trash).unwrap();
+        fs::write(trash.join("old.zip"), vec![0u8; 4096]).unwrap();
+        let Some(_lock) = crate::fsutil::tests::Locked::new(&trash) else {
+            return;
+        };
+
+        let cfg = Config {
+            home: home.path().to_path_buf(),
+            ..Default::default()
+        };
+        let found = system_caches(&cfg);
+
+        // It used to vanish: zero bytes read, zero bytes dropped.
+        let t = found.iter().find(|f| f.path == trash).expect("trash kept");
+        assert!(t.unreadable);
+        assert_eq!(t.size, 0);
+        assert!(!t.auto());
+    }
 
     #[test]
     fn missing_paths_are_skipped() {

@@ -29,6 +29,11 @@ pub struct Finding {
     /// a project still in active use is not, so it is left unticked by default
     /// and skipped under `--yes`. True for findings that don't age.
     pub stale: bool,
+    /// macOS refused to list part of it, so `size` is a floor. A finding like
+    /// this stays in the report even at zero bytes: a Trash that only looks
+    /// empty because it couldn't be read is not an empty Trash.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unreadable: bool,
 }
 
 impl Finding {
@@ -40,6 +45,7 @@ impl Finding {
             action,
             risky: false,
             stale: true,
+            unreadable: false,
         }
     }
 
@@ -57,12 +63,27 @@ impl Finding {
         self.stale = stale;
         self
     }
+
+    pub fn unreadable(mut self, unreadable: bool) -> Self {
+        self.unreadable = unreadable;
+        self
+    }
+
+    /// Picked without asking: safe, idle, and actually readable. Something we
+    /// couldn't see into at all has nothing to clean that we can vouch for.
+    pub fn auto(&self) -> bool {
+        !self.risky && self.stale && !(self.unreadable && self.size == 0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub target: String,
     pub findings: Vec<Finding>,
+    /// Folders the scan wanted to look inside and macOS refused. Nothing in
+    /// them is counted anywhere, so they are listed rather than dropped.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unreadable: Vec<PathBuf>,
 }
 
 impl Report {
@@ -70,6 +91,7 @@ impl Report {
         Self {
             target: target.into(),
             findings: Vec::new(),
+            unreadable: Vec::new(),
         }
     }
 

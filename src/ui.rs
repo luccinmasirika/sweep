@@ -7,7 +7,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::report::Report;
+use crate::report::{Finding, Report};
 
 const GB: u64 = 1_000_000_000;
 const HUNDRED_MB: u64 = 100_000_000;
@@ -94,6 +94,7 @@ pub fn print_report(report: &Report) {
     );
     if report.is_empty() {
         println!("   {}", "nothing found".dimmed());
+        print_unreadable(&report.unreadable);
         return;
     }
     let shown = count.min(MAX_ROWS);
@@ -104,6 +105,9 @@ pub fn print_report(report: &Report) {
         }
         if !f.stale {
             tail.push_str(&format!("{} ", "active".cyan()));
+        }
+        if f.unreadable {
+            tail.push_str(&format!("{} ", lock_label(f.size).yellow()));
         }
         if let Some(note) = &f.note {
             tail.push_str(&format!("({note})").yellow().to_string());
@@ -145,6 +149,49 @@ pub fn print_report(report: &Report) {
         format!("↳ reclaimable {}", human(reclaimable))
     };
     println!("  {} {}", " ".repeat(10), tail.dimmed());
+    print_unreadable(&report.unreadable);
+}
+
+/// Folders macOS refused to list, shortest first. Only the outermost of a
+/// nested pair is kept: a denied `~/Library/Mail` says all there is to say
+/// about what's inside it.
+fn unreadable_roots<'a>(
+    paths: impl Iterator<Item = &'a std::path::Path>,
+) -> Vec<&'a std::path::Path> {
+    let mut sorted: Vec<&std::path::Path> = paths.collect();
+    sorted.sort_by_key(|p| p.components().count());
+    let mut roots: Vec<&std::path::Path> = Vec::new();
+    for p in sorted {
+        if !roots.iter().any(|r| p.starts_with(r)) {
+            roots.push(p);
+        }
+    }
+    roots
+}
+
+fn lock_label(size: u64) -> &'static str {
+    if size == 0 {
+        "🔒 unreadable"
+    } else {
+        "🔒 partly unreadable"
+    }
+}
+
+fn print_unreadable(paths: &[std::path::PathBuf]) {
+    let roots = unreadable_roots(paths.iter().map(|p| p.as_path()));
+    if roots.is_empty() {
+        return;
+    }
+    const SHOWN: usize = 3;
+    let mut list: Vec<String> = roots.iter().take(SHOWN).map(|p| pretty_path(p)).collect();
+    if roots.len() > SHOWN {
+        list.push(format!("+{} more", roots.len() - SHOWN));
+    }
+    println!(
+        "  {} {}",
+        " ".repeat(10),
+        format!("🔒 couldn't read {}", list.join(", ")).yellow()
+    );
 }
 
 pub fn print_summary(reports: &[Report]) {
@@ -179,6 +226,33 @@ pub fn print_summary(reports: &[Report]) {
         "{}",
         "Run `sweep clean` to free the reclaimable part; the rest is yours to tick.".dimmed()
     );
+
+    let denied = unreadable_roots(reports.iter().flat_map(|r| {
+        r.unreadable.iter().map(|p| p.as_path()).chain(
+            r.findings
+                .iter()
+                .filter(|f| f.unreadable)
+                .map(|f| f.path.as_path()),
+        )
+    }));
+    if !denied.is_empty() {
+        println!();
+        println!(
+            "{} {}",
+            "🔒".yellow(),
+            format!(
+                "{} folder(s) couldn't be read, so these totals are a floor.",
+                denied.len()
+            )
+            .yellow()
+            .bold()
+        );
+        println!(
+            "   {}",
+            "Give your terminal Full Disk Access: System Settings → Privacy & Security → Full Disk Access"
+                .dimmed()
+        );
+    }
 }
 
 pub fn clean_progress(len: u64) -> ProgressBar {
@@ -270,11 +344,7 @@ pub fn select_findings(report: &Report) -> Result<Vec<usize>> {
             None => format!("{}  {}", human(f.size), pretty_path(&f.path)),
         })
         .collect();
-    let defaults: Vec<bool> = report
-        .findings
-        .iter()
-        .map(|f| !f.risky && f.stale)
-        .collect();
+    let defaults: Vec<bool> = report.findings.iter().map(Finding::auto).collect();
     println!("  {}", "↑/↓ move · space to tick · enter to apply".dimmed());
     let selection = dialoguer::MultiSelect::with_theme(&menu_theme())
         .with_prompt("Tick what to clean")
@@ -388,7 +458,19 @@ pub fn print_doctor(d: &crate::fsutil::Diagnosis) {
         println!("  {}", "nothing found".dimmed());
     } else {
         for dir in &d.library_dirs {
-            println!("  {}  {}", size_cell(dir.size, 10), dir.path.dimmed());
+            let lock = if dir.unreadable {
+                format!("  {}", lock_label(dir.size).yellow())
+            } else {
+                String::new()
+            };
+            println!("  {}  {}{lock}", size_cell(dir.size, 10), dir.path.dimmed());
+        }
+        if d.library_dirs.iter().any(|dir| dir.unreadable) {
+            println!(
+                "  {}",
+                "sizes marked 🔒 are a floor — give your terminal Full Disk Access to see the rest"
+                    .dimmed()
+            );
         }
     }
 

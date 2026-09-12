@@ -164,7 +164,7 @@ pub fn run_clean(
         ui::print_report(report);
 
         let chosen: Vec<&Finding> = if guided {
-            let all_default_off = report.findings.iter().all(|f| f.risky || !f.stale);
+            let all_default_off = !report.findings.iter().any(Finding::auto);
             match ui::choose_action(
                 &report.target,
                 report.findings.len(),
@@ -181,11 +181,7 @@ pub fn run_clean(
         } else {
             // Unattended: only safe, idle items — never personal data or
             // projects that still look active.
-            report
-                .findings
-                .iter()
-                .filter(|f| !f.risky && f.stale)
-                .collect()
+            report.findings.iter().filter(|f| f.auto()).collect()
         };
 
         if chosen.is_empty() {
@@ -287,10 +283,19 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
         }
     }
 
-    let trashes: Vec<_> = fsutil::all_trashes()
-        .into_iter()
-        .filter(|t| fsutil::dir_size(t) > 0)
-        .collect();
+    let mut trashes = Vec::new();
+    for trash in fsutil::all_trashes() {
+        let usage = fsutil::dir_usage(&trash);
+        if usage.unreadable && usage.bytes == 0 {
+            // Skipping it quietly would read as "nothing to empty".
+            ui::warn(&format!(
+                "can't look inside {} — give your terminal Full Disk Access",
+                ui::pretty_path(&trash)
+            ));
+        } else if usage.bytes > 0 {
+            trashes.push(trash);
+        }
+    }
     if !trashes.is_empty() {
         let go = fix || ui::confirm(&format!("Empty {} Trash location(s) now?", trashes.len()))?;
         if go {

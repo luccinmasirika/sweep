@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -8,21 +9,46 @@ use anyhow::{bail, Context, Result};
 use jwalk::WalkDirGeneric;
 use serde::Serialize;
 
+/// How much of a path could be measured. macOS answers a Full Disk Access
+/// denial exactly like an empty folder unless the error is kept, so a size of
+/// zero on its own proves nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub bytes: u64,
+    /// Some of the tree refused to be listed, so `bytes` is a floor.
+    pub unreadable: bool,
+}
+
 /// On-disk size of a single path: the whole subtree for a directory, the file's
 /// own blocks otherwise. Symlinks are measured as the link, never followed.
 pub fn path_size(path: &Path) -> u64 {
+    path_usage(path).bytes
+}
+
+pub fn path_usage(path: &Path) -> Usage {
     match fs::symlink_metadata(path) {
-        Ok(m) if m.is_dir() => dir_size(path),
-        Ok(m) => m.blocks() * 512,
-        Err(_) => 0,
+        Ok(m) if m.is_dir() => dir_usage(path),
+        Ok(m) => Usage {
+            bytes: m.blocks() * 512,
+            unreadable: false,
+        },
+        Err(e) => Usage {
+            bytes: 0,
+            unreadable: e.kind() == io::ErrorKind::PermissionDenied,
+        },
     }
 }
 
-/// Bytes actually occupied on disk by every regular file under `path`, walked
-/// in parallel and not following symlinks. Counts real `st_blocks` (so sparse
-/// files and APFS clones aren't over-reported) and dedups hardlinks by
-/// `(device, inode)` so a file linked twice in the tree is counted once.
 pub fn dir_size(path: &Path) -> u64 {
+    dir_usage(path).bytes
+}
+
+/// Bytes actually occupied on disk by every regular file under `path`, walked
+/// in parallel and not following symlinks. Counts real `st_blocks`, so sparse
+/// files aren't over-reported, and dedups hardlinks by `(device, inode)` so a
+/// file linked twice in the tree is counted once. APFS clones are a different
+/// inode sharing the same blocks, and are counted once per clone.
+pub fn dir_usage(path: &Path) -> Usage {
     // Per-file state stashed during the parallel walk: (on-disk bytes, dev, ino).
     let walk = WalkDirGeneric::<((), Option<(u64, u64, u64)>)>::new(path)
         .follow_links(false)
@@ -37,16 +63,32 @@ pub fn dir_size(path: &Path) -> u64 {
         });
 
     let mut seen = HashSet::new();
-    let mut total = 0;
+    let mut usage = Usage::default();
     for entry in walk {
-        let Ok(entry) = entry else { continue };
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                usage.unreadable |= is_denied(&e);
+                continue;
+            }
+        };
+        // jwalk hands back a directory it couldn't list as a normal entry,
+        // with the refusal tucked inside it.
+        if let Some(e) = &entry.read_children_error {
+            usage.unreadable |= is_denied(e);
+        }
         if let Some((bytes, dev, ino)) = entry.client_state {
             if seen.insert((dev, ino)) {
-                total += bytes;
+                usage.bytes += bytes;
             }
         }
     }
-    total
+    usage
+}
+
+fn is_denied(e: &jwalk::Error) -> bool {
+    e.io_error()
+        .is_some_and(|io| io.kind() == io::ErrorKind::PermissionDenied)
 }
 
 /// Install prefixes of language toolchains found on `PATH` (e.g. the Node
@@ -202,6 +244,8 @@ fn df(mount: &Path) -> Option<Df> {
 pub struct DirUsage {
     pub path: String,
     pub size: u64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub unreadable: bool,
 }
 
 /// One APFS volume inside the container: its role (`Data`, `Preboot`, `VM`…)
@@ -419,11 +463,12 @@ pub fn diagnose() -> Diagnosis {
         ] {
             let dir = lib.join(sub);
             if dir.is_dir() {
-                let size = dir_size(&dir);
-                if size > 0 {
+                let usage = dir_usage(&dir);
+                if usage.bytes > 0 || usage.unreadable {
                     library_dirs.push(DirUsage {
                         path: format!("~/Library/{sub}"),
-                        size,
+                        size: usage.bytes,
+                        unreadable: usage.unreadable,
                     });
                 }
             }
@@ -442,7 +487,7 @@ pub fn diagnose() -> Diagnosis {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::fs;
 
@@ -459,6 +504,53 @@ mod tests {
         empty_dir(dir.path()).unwrap();
         assert_eq!(dir_size(dir.path()), 0);
         assert!(dir.path().is_dir());
+    }
+
+    /// A directory nobody can list, restored on drop so the tempdir can go.
+    /// `None` when running as root, where permissions don't bite.
+    pub(crate) struct Locked(PathBuf);
+
+    impl Locked {
+        pub(crate) fn new(path: &Path) -> Option<Self> {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+            let locked = Self(path.to_path_buf());
+            fs::read_dir(path).is_err().then_some(locked)
+        }
+    }
+
+    impl Drop for Locked {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    #[test]
+    fn a_refused_folder_is_flagged_not_read_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("seen.bin"), vec![0u8; 200_000]).unwrap();
+        let hidden = dir.path().join("Mail");
+        fs::create_dir(&hidden).unwrap();
+        fs::write(hidden.join("inbox.mbox"), vec![0u8; 200_000]).unwrap();
+        let Some(_lock) = Locked::new(&hidden) else {
+            return;
+        };
+
+        let usage = dir_usage(dir.path());
+        // The readable part still counts; the total is just known to be short.
+        assert!(usage.bytes >= 200_000 && usage.bytes < 400_000);
+        assert!(usage.unreadable);
+
+        // Pointed straight at the refused folder: zero bytes, but not "empty".
+        assert_eq!(
+            dir_usage(&hidden),
+            Usage {
+                bytes: 0,
+                unreadable: true
+            }
+        );
+        assert!(!dir_usage(&dir.path().join("seen.bin")).unreadable);
     }
 
     #[test]

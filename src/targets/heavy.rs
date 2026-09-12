@@ -38,6 +38,7 @@ impl Target for Heavy {
 
         let mut report = Report::new(self.name());
         report.findings = scan.found;
+        report.unreadable = scan.unreadable;
         report.findings.sort_by(|a, b| b.size.cmp(&a.size));
         Ok(report)
     }
@@ -56,6 +57,7 @@ struct Scan<'a> {
     covered_roots: Vec<PathBuf>,
     exclude: Vec<PathBuf>,
     found: Vec<Finding>,
+    unreadable: Vec<PathBuf>,
 }
 
 /// What one directory contributes to its parent: its weight on disk, how much
@@ -130,6 +132,7 @@ impl<'a> Scan<'a> {
             covered_roots: crate::catalog::covered_roots(&cfg.home),
             exclude: cfg.exclude.clone(),
             found: Vec::new(),
+            unreadable: Vec::new(),
         }
     }
 
@@ -137,8 +140,14 @@ impl<'a> Scan<'a> {
     /// each heavy item: deep enough to be specific, but not so deep that a lone
     /// chain of single-child folders buries the name that means something.
     fn walk(&mut self, dir: &Path, depth: usize, home: &Path) -> Subtree {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return Subtree::default();
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    self.unreadable.push(dir.to_path_buf());
+                }
+                return Subtree::default();
+            }
         };
         let mut total = 0;
         let mut owned_elsewhere = 0;
@@ -177,7 +186,11 @@ impl<'a> Scan<'a> {
             // A bundle is one item to the user even though it is a directory,
             // and so is anything past the depth cap: size it in one pass.
             let size = if is_bundle(&name) || depth + 1 >= MAX_DEPTH {
-                let size = fsutil::dir_size(&path);
+                let usage = fsutil::dir_usage(&path);
+                if usage.unreadable {
+                    self.unreadable.push(path.clone());
+                }
+                let size = usage.bytes;
                 if size >= self.min {
                     heavy.push(self.weigh(path, size, &meta));
                 }
@@ -399,6 +412,22 @@ mod tests {
         // Two apps reported separately; never the shared folder above them.
         assert_eq!(found.len(), 2);
         assert!(!found.iter().any(|f| f.path.ends_with("Group Containers")));
+    }
+
+    #[test]
+    fn a_refused_folder_is_listed_not_ignored() {
+        let home = tempfile::tempdir().unwrap();
+        let mail = home.path().join("Library/Mail");
+        fs::create_dir_all(&mail).unwrap();
+        fs::write(mail.join("inbox.mbox"), vec![0u8; 200_000]).unwrap();
+        let Some(_lock) = crate::fsutil::tests::Locked::new(&mail) else {
+            return;
+        };
+
+        let report = Heavy.scan(&cfg_for(home.path(), 100_000)).unwrap();
+
+        assert!(report.findings.is_empty());
+        assert_eq!(report.unreadable, vec![mail.clone()]);
     }
 
     #[test]

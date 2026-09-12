@@ -144,11 +144,12 @@ fn find_dirs(
 }
 
 fn finding_for(path: &Path, stale: Duration) -> Finding {
-    let size = fsutil::dir_size(path);
+    let usage = fsutil::dir_usage(path);
     let ages = stale != Duration::MAX;
     let is_stale = !ages || parent_stale(path, stale);
-    let mut finding =
-        Finding::dir(path.to_path_buf(), size, CleanAction::RemovePath).stale(is_stale);
+    let mut finding = Finding::dir(path.to_path_buf(), usage.bytes, CleanAction::RemovePath)
+        .stale(is_stale)
+        .unreadable(usage.unreadable);
     if ages && is_stale {
         finding = finding.with_note(format!("idle > {}d", stale.as_secs() / 86_400));
     }

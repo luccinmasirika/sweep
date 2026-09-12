@@ -14,7 +14,7 @@ pub fn run(cfg: &Config, yes: bool, purge: bool) -> Result<u32> {
 
     let safe: Vec<&Finding> = reports
         .iter()
-        .flat_map(|r| r.findings.iter().filter(|f| !f.risky && f.stale))
+        .flat_map(|r| r.findings.iter().filter(|f| f.auto()))
         .collect();
 
     if safe.is_empty() {

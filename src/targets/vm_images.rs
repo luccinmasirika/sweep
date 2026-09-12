@@ -84,15 +84,16 @@ impl Target for VmImages {
             if !path.is_dir() {
                 continue;
             }
-            let size = fsutil::dir_size(&path);
-            if size < cfg.min_dir_bytes {
+            let usage = fsutil::dir_usage(&path);
+            if usage.bytes < cfg.min_dir_bytes && !usage.unreadable {
                 continue;
             }
             // Deleting one of these throws away images, volumes and any VM
             // state with them, so it always takes a deliberate tick.
             report.findings.push(
-                Finding::dir(path, size, CleanAction::RemovePath)
+                Finding::dir(path, usage.bytes, CleanAction::RemovePath)
                     .risky(true)
+                    .unreadable(usage.unreadable)
                     .with_note(rt.note),
             );
         }

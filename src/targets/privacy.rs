@@ -87,7 +87,7 @@ impl Target for Privacy {
             );
         }
 
-        f.retain(|x| x.size > 0);
+        f.retain(|x| x.size > 0 || x.unreadable);
         f.sort_by(|a, b| b.size.cmp(&a.size));
         Ok(report)
     }
@@ -97,10 +97,11 @@ fn push(findings: &mut Vec<Finding>, path: PathBuf, action: CleanAction, risky: 
     if !path.exists() {
         return;
     }
-    let size = fsutil::path_size(&path);
+    let usage = fsutil::path_usage(&path);
     findings.push(
-        Finding::dir(path, size, action)
+        Finding::dir(path, usage.bytes, action)
             .risky(risky)
+            .unreadable(usage.unreadable)
             .with_note(note),
     );
 }
