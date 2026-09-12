@@ -266,6 +266,45 @@ pub fn clean_progress(len: u64) -> ProgressBar {
     pb
 }
 
+/// What was left in place because something was using it, grouped by reason so
+/// a busy cache folder doesn't turn into a page of lines.
+pub fn print_skipped(skipped: &[crate::fsutil::Skipped]) {
+    if skipped.is_empty() {
+        return;
+    }
+    let bytes: u64 = skipped.iter().map(|s| s.size).sum();
+    println!(
+        "   {}   {}  {}",
+        "in use".cyan(),
+        human(bytes).cyan().bold(),
+        format!(
+            "({} item(s) left alone — run again once they're closed)",
+            skipped.len()
+        )
+        .dimmed()
+    );
+    let mut by_reason: Vec<(&str, Vec<&crate::fsutil::Skipped>)> = Vec::new();
+    for s in skipped {
+        match by_reason.iter_mut().find(|(r, _)| *r == s.reason) {
+            Some((_, items)) => items.push(s),
+            None => by_reason.push((&s.reason, vec![s])),
+        }
+    }
+    for (reason, items) in by_reason {
+        let first = pretty_path(&items[0].path);
+        let more = if items.len() > 1 {
+            format!(" +{} more", items.len() - 1)
+        } else {
+            String::new()
+        };
+        println!(
+            "     {}  {}",
+            format!("{reason}:").dimmed(),
+            format!("{first}{more}").dimmed()
+        );
+    }
+}
+
 pub fn print_freed(freed: u64, trashed: u64, before: Option<u64>, after: Option<u64>) {
     println!();
     println!("{} {}", "✓".green().bold(), "Done".bold());

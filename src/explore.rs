@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 use serde::Serialize;
 
+use crate::inuse::InUse;
 use crate::{fsutil, ui};
 
 /// At most this many rows in the non-interactive tree.
@@ -116,12 +117,17 @@ fn browse(mut cwd: PathBuf) -> Result<()> {
 
         match actions[a] {
             "Open" => cwd = item.path.clone(),
-            "Move to Trash"
-                if ui::confirm(&format!("Move {} to Trash?", ui::pretty_path(&item.path)))? =>
-            {
-                match fsutil::remove_path(&item.path, false) {
-                    Ok(_) => ui::ok("moved to Trash"),
-                    Err(e) => ui::warn(&format!("{e}")),
+            "Move to Trash" => {
+                if let Some(reason) = InUse::capture().why(&item.path) {
+                    ui::warn(&format!(
+                        "{} is in use ({reason}) — close it first",
+                        ui::pretty_path(&item.path)
+                    ));
+                } else if ui::confirm(&format!("Move {} to Trash?", ui::pretty_path(&item.path)))? {
+                    match fsutil::remove_path(&item.path, false) {
+                        Ok(_) => ui::ok("moved to Trash"),
+                        Err(e) => ui::warn(&format!("{e}")),
+                    }
                 }
             }
             _ => {}

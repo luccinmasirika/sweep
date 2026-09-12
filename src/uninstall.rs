@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::apps::{self, App};
 use crate::fsutil;
+use crate::inuse::InUse;
 use crate::ui;
 
 /// `uninstall` removes an app and its whole footprint — the `.app` bundle plus
@@ -137,6 +138,17 @@ fn uninstall_one(
         println!("  {:>10}  {}", ui::human(*size), ui::pretty_path(p));
     }
     let total: u64 = sizes.iter().sum();
+
+    // Pulling files out from under a running app can crash it or leave it
+    // half-removed; better to stop and ask for it to be quit first.
+    let in_use = InUse::capture();
+    if let Some(reason) = in_use.why(&app.path) {
+        ui::warn(&format!(
+            "{} can't be removed while in use ({reason}) — quit it and run again",
+            app.name
+        ));
+        return Ok(1);
+    }
     println!("  {}", format_args!("↳ {} total", ui::human(total)));
 
     let verb = if purge { "delete" } else { "move to Trash" };
@@ -150,6 +162,10 @@ fn uninstall_one(
 
     let mut failures = 0;
     for (p, size) in footprint.iter().zip(sizes) {
+        if let Some(reason) = in_use.why(p) {
+            ui::warn(&format!("left {} ({reason})", ui::pretty_path(p)));
+            continue;
+        }
         match fsutil::remove_path(p, purge) {
             Ok(Some(id)) => trash.record(id, size),
             Ok(None) => {}

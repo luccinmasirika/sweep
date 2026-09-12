@@ -6,6 +6,7 @@ pub mod dupes;
 pub mod exec;
 pub mod explore;
 pub mod fsutil;
+pub mod inuse;
 pub mod maintenance;
 pub mod report;
 pub mod schedule;

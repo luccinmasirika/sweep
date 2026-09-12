@@ -6,6 +6,7 @@ use anyhow::{bail, Result};
 use jwalk::WalkDir;
 use serde::Serialize;
 
+use crate::inuse::InUse;
 use crate::{fsutil, ui};
 
 /// Files smaller than this are ignored — deduping kilobyte files isn't worth the
@@ -41,6 +42,7 @@ pub fn run(start: Option<PathBuf>, json: bool) -> Result<()> {
     );
     let trashing = interactive();
     let mut trash = fsutil::TrashLog::default();
+    let mut in_use: Option<InUse> = None;
     for set in &sets {
         println!();
         println!(
@@ -53,7 +55,12 @@ pub fn run(start: Option<PathBuf>, json: bool) -> Result<()> {
             println!("    {}", ui::pretty_path(p));
         }
         if trashing && ui::confirm("Move all but the first to Trash?")? {
+            let in_use = in_use.get_or_insert_with(InUse::capture);
             for p in &set.paths[1..] {
+                if let Some(reason) = in_use.why(p) {
+                    ui::warn(&format!("left {} ({reason})", ui::pretty_path(p)));
+                    continue;
+                }
                 match fsutil::remove_path(p, false) {
                     Ok(id) => {
                         if let Some(id) = id {

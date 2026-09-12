@@ -408,13 +408,23 @@ fn hard_remove(path: &Path, meta: &fs::Metadata) -> Result<()> {
     }
 }
 
+/// Something a clean deliberately left in place, and why.
+#[derive(Debug, Clone)]
+pub struct Skipped {
+    pub path: PathBuf,
+    pub size: u64,
+    pub reason: String,
+}
+
 /// Empty a directory, keeping the directory itself. Caches are pure regenerable
-/// junk, so entries are hard-deleted rather than sent to the Trash. Best-effort:
-/// locked or in-use entries like the `com.apple.Music` cache are skipped, and
-/// protected toolchain paths are left untouched, instead of aborting.
-pub fn empty_dir(path: &Path) -> Result<()> {
+/// junk, so entries are hard-deleted rather than sent to the Trash. Anything in
+/// use — open by a process, belonging to a running app or a system service —
+/// is left in place and returned, as are protected toolchain paths. Other
+/// entries that won't delete are skipped instead of aborting.
+pub fn empty_dir(path: &Path, in_use: &crate::inuse::InUse) -> Result<Vec<Skipped>> {
+    let mut skipped = Vec::new();
     if !path.is_dir() {
-        return Ok(());
+        return Ok(skipped);
     }
     let roots = protected_roots();
     for entry in fs::read_dir(path)? {
@@ -423,11 +433,19 @@ pub fn empty_dir(path: &Path) -> Result<()> {
         if is_protected(&p, roots) {
             continue;
         }
+        if let Some(reason) = in_use.why(&p) {
+            skipped.push(Skipped {
+                size: path_size(&p),
+                path: p,
+                reason,
+            });
+            continue;
+        }
         if let Ok(meta) = fs::symlink_metadata(&p) {
             let _ = hard_remove(&p, &meta);
         }
     }
-    Ok(())
+    Ok(skipped)
 }
 
 /// An iCloud file evicted from local storage: it reports its full size but
@@ -895,7 +913,7 @@ pub(crate) mod tests {
         // On-disk size: at least the bytes written, rounded up to whole blocks.
         assert!(dir_size(dir.path()) >= 400_000);
 
-        empty_dir(dir.path()).unwrap();
+        empty_dir(dir.path(), &crate::inuse::InUse::default()).unwrap();
         assert_eq!(dir_size(dir.path()), 0);
         assert!(dir.path().is_dir());
     }

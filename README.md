@@ -63,6 +63,21 @@ you put in the Trash yourself is never part of it, and the Trash itself is
 never emptied by `--yes`, `smart` or a scheduled run: it is listed as a
 personal item and only goes if you tick it.
 
+Nothing in use is removed. Just before the first item goes, sweep takes one
+snapshot of what's busy — every file a process has open (`lsof`), every running
+app, and the caches of system services like iCloud Drive and Apple Account
+sign-in — and leaves those in place, listing what it skipped and why:
+
+```
+   in use   3.6 GB  (6 item(s) left alone — run again once they're closed)
+     open in ShipIt:  ~/Library/Caches/com.todesktop….ShipIt
+     Dia is running:  ~/Library/Caches/Dia +2 more
+```
+
+Deleting under a running app can crash it, corrupt its cache or break an update
+halfway, and a file that's still open doesn't give its space back until it's
+closed anyway. `uninstall` refuses outright while the app is running.
+
 In the per-target menu, the default action cleans the safe items only — the
 same set `--yes` would take. Personal files, active projects and the Trash are
 reached through "Choose items…", so a stray Enter can't delete them.

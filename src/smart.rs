@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::config::Config;
+use crate::inuse::InUse;
 use crate::report::Finding;
 use crate::{cli, fsutil, ui};
 
@@ -35,13 +36,14 @@ pub fn run(cfg: &Config, yes: bool, purge: bool) -> Result<u32> {
         }
     }
 
-    let mut outcome = cli::apply_findings(&safe, purge);
+    let mut outcome = cli::apply_findings(&safe, purge, &InUse::capture());
     ui::print_freed(
         outcome.freed,
         outcome.trash.bytes(),
         before,
         fsutil::free_space_root(),
     );
+    ui::print_skipped(&outcome.skipped);
     if !yes && interactive() {
         outcome.failures += cli::offer_to_empty(&outcome.trash)?;
     }

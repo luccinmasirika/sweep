@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use crate::config::Config;
 use crate::exec;
 use crate::fsutil;
+use crate::inuse::InUse;
 use crate::report::{apply, Finding, Report};
 use crate::targets;
 use crate::ui;
@@ -154,6 +155,9 @@ pub fn run_clean(
     let before = fsutil::free_space_root();
     let reports = collect(&cfg, only)?;
     let mut outcome = Outcome::default();
+    // Taken when the first item is about to go, not before the menus: an app
+    // opened while you were choosing still counts.
+    let mut in_use: Option<InUse> = None;
 
     for report in &reports {
         if report.is_empty() {
@@ -180,7 +184,8 @@ pub fn run_clean(
             continue;
         }
 
-        outcome.absorb(apply_findings(&chosen, purge));
+        let in_use = in_use.get_or_insert_with(InUse::capture);
+        outcome.absorb(apply_findings(&chosen, purge, in_use));
         ui::ok(&format!("{} cleaned", report.target));
     }
 
@@ -190,6 +195,7 @@ pub fn run_clean(
         before,
         fsutil::free_space_root(),
     );
+    ui::print_skipped(&outcome.skipped);
     if guided {
         outcome.failures += offer_to_empty(&outcome.trash)?;
     }
@@ -203,6 +209,7 @@ pub(crate) struct Outcome {
     pub freed: u64,
     pub failures: u32,
     pub trash: fsutil::TrashLog,
+    pub skipped: Vec<fsutil::Skipped>,
 }
 
 impl Outcome {
@@ -210,6 +217,7 @@ impl Outcome {
         self.freed += other.freed;
         self.failures += other.failures;
         self.trash.extend(other.trash);
+        self.skipped.extend(other.skipped);
     }
 }
 
@@ -252,14 +260,19 @@ pub(crate) fn offer_to_empty(trash: &fsutil::TrashLog) -> Result<u32> {
 }
 
 /// Apply a batch of findings with a progress bar.
-pub(crate) fn apply_findings(chosen: &[&Finding], purge: bool) -> Outcome {
+pub(crate) fn apply_findings(chosen: &[&Finding], purge: bool, in_use: &InUse) -> Outcome {
     let mut outcome = Outcome::default();
     let pb = ui::clean_progress(chosen.len() as u64);
     for finding in chosen {
         pb.set_message(ui::pretty_path(&finding.path));
-        match apply(finding, purge) {
-            Ok((bytes, Some(id))) => outcome.trash.record(id, bytes),
-            Ok((bytes, None)) => outcome.freed += bytes,
+        match apply(finding, purge, in_use) {
+            Ok(applied) => {
+                match applied.trashed {
+                    Some(id) => outcome.trash.record(id, applied.bytes),
+                    None => outcome.freed += applied.bytes,
+                }
+                outcome.skipped.extend(applied.skipped);
+            }
             Err(e) => {
                 outcome.failures += 1;
                 ui::warn(&format!("{}: {e}", ui::pretty_path(&finding.path)));
@@ -342,8 +355,10 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
     if !trashes.is_empty() {
         let go = fix || ui::confirm(&format!("Empty {} Trash location(s) now?", trashes.len()))?;
         if go {
+            // Nothing runs out of a Trash folder, so there's nothing in use to
+            // look for.
             for trash in &trashes {
-                if let Err(e) = fsutil::empty_dir(trash) {
+                if let Err(e) = fsutil::empty_dir(trash, &InUse::default()) {
                     failures += 1;
                     ui::warn(&format!("{}: {e}", ui::pretty_path(trash)));
                 }

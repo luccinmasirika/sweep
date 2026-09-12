@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde::Serialize;
 
+use crate::inuse::InUse;
 use crate::{exec, fsutil};
 
 #[derive(Debug, Clone, Serialize)]
@@ -114,23 +115,55 @@ impl Report {
     }
 }
 
-/// Runs a finding's action and returns the bytes it accounts for, plus what it
-/// moved to the Trash if it did. For commands the figure is the estimate we
-/// computed at scan time, not a measured value. `purge` forces a real delete
-/// for `RemovePath` instead of a move to Trash.
-pub fn apply(finding: &Finding, purge: bool) -> Result<(u64, Option<fsutil::TrashId>)> {
+/// What running one finding did.
+#[derive(Debug, Default)]
+pub struct Applied {
+    /// Bytes it accounts for. For commands this is the estimate computed at
+    /// scan time, not a measured value.
+    pub bytes: u64,
+    pub trashed: Option<fsutil::TrashId>,
+    pub skipped: Vec<fsutil::Skipped>,
+}
+
+/// Runs a finding's action. Nothing in use is touched: a path something is
+/// using is skipped whole, and emptying a folder leaves its in-use entries
+/// behind. `purge` forces a real delete for `RemovePath` instead of a move to
+/// Trash.
+pub fn apply(finding: &Finding, purge: bool, in_use: &InUse) -> Result<Applied> {
     match &finding.action {
         CleanAction::RemovePath => {
+            if let Some(reason) = in_use.why(&finding.path) {
+                return Ok(Applied {
+                    skipped: vec![fsutil::Skipped {
+                        path: finding.path.clone(),
+                        size: finding.size,
+                        reason,
+                    }],
+                    ..Applied::default()
+                });
+            }
             let trashed = fsutil::remove_path(&finding.path, purge)?;
-            Ok((finding.size, trashed))
+            Ok(Applied {
+                bytes: finding.size,
+                trashed,
+                ..Applied::default()
+            })
         }
         CleanAction::EmptyDir => {
-            fsutil::empty_dir(&finding.path)?;
-            Ok((finding.size, None))
+            let skipped = fsutil::empty_dir(&finding.path, in_use)?;
+            let kept: u64 = skipped.iter().map(|s| s.size).sum();
+            Ok(Applied {
+                bytes: finding.size.saturating_sub(kept),
+                skipped,
+                ..Applied::default()
+            })
         }
         CleanAction::Command(cmd) => {
             exec::run(cmd)?;
-            Ok((finding.size, None))
+            Ok(Applied {
+                bytes: finding.size,
+                ..Applied::default()
+            })
         }
     }
 }
