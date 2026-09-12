@@ -7,6 +7,7 @@ pub mod exec;
 pub mod explore;
 pub mod fsutil;
 pub mod inuse;
+pub mod journal;
 pub mod maintenance;
 pub mod report;
 pub mod schedule;

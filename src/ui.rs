@@ -7,6 +7,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
+use std::cmp::Reverse;
+
 use crate::report::{Finding, Report};
 
 const GB: u64 = 1_000_000_000;
@@ -647,6 +649,194 @@ fn print_usage_row(f: &crate::fsutil::DirUsage) {
         tail.push_str(&format!("  {}", note.dimmed()));
     }
     println!("  {}  {}{tail}", size_cell(f.size, 10), f.path.bold());
+}
+
+/// Running sums for a dry run's closing line.
+#[derive(Default)]
+pub struct PlanTotals {
+    pub freed: u64,
+    pub trashed: u64,
+    pub kept: u64,
+    pub needs_tick: u64,
+}
+
+impl PlanTotals {
+    pub fn add(&mut self, plan: &crate::report::Plan) {
+        match plan.verb {
+            "trash" => self.trashed += plan.bytes,
+            "skip" => {}
+            _ => self.freed += plan.bytes,
+        }
+        self.kept += plan.keeps.iter().map(|k| k.size).sum::<u64>();
+    }
+}
+
+pub fn print_plan_header(report: &Report) {
+    println!();
+    println!(
+        "{} {}",
+        icon(&report.target),
+        report.target.to_uppercase().bold().blue()
+    );
+}
+
+pub fn print_plan_row(finding: &Finding, plan: &crate::report::Plan) {
+    let label = match plan.verb {
+        "skip" => format!("{:<8}", "leave").cyan().to_string(),
+        verb => format!("{verb:<8}").green().to_string(),
+    };
+    let tail = match &finding.action {
+        crate::report::CleanAction::Command(cmd) => {
+            format!("  `{}`", cmd.join(" ")).dimmed().to_string()
+        }
+        _ => String::new(),
+    };
+    let shown = if plan.verb == "skip" {
+        finding.size
+    } else {
+        plan.bytes
+    };
+    println!(
+        "  {label}  {}  {}{tail}",
+        size_cell(shown, 10),
+        pretty_path(&finding.path)
+    );
+    if plan.keeps.is_empty() {
+        return;
+    }
+    let kept: u64 = plan.keeps.iter().map(|k| k.size).sum();
+    let named: Vec<String> = plan
+        .keeps
+        .iter()
+        .take(3)
+        .map(|k| {
+            let name = k.path.file_name().map_or_else(
+                || pretty_path(&k.path),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            format!("{name} ({})", k.reason)
+        })
+        .collect();
+    let more = if plan.keeps.len() > 3 {
+        format!(" +{} more", plan.keeps.len() - 3)
+    } else {
+        String::new()
+    };
+    println!(
+        "  {}  {}",
+        " ".repeat(21),
+        format!("keeps {} in use: {}{more}", human(kept), named.join(", ")).cyan()
+    );
+}
+
+pub fn print_tick_row(finding: &Finding) {
+    let why = if finding.risky {
+        "personal"
+    } else if finding.unreadable && finding.size == 0 {
+        "unreadable"
+    } else {
+        "active"
+    };
+    let note = finding
+        .note
+        .as_deref()
+        .map(|n| format!("  ({n})"))
+        .unwrap_or_default();
+    println!(
+        "  {}  {}  {}{}",
+        format!("{why:<8}").dimmed(),
+        size_cell(finding.size, 10),
+        pretty_path(&finding.path).dimmed(),
+        note.dimmed()
+    );
+}
+
+pub fn print_plan_totals(t: &PlanTotals) {
+    println!();
+    println!("{}", "Dry run — nothing was touched".bold().underline());
+    println!("  would free    {}", human(t.freed).green().bold());
+    if t.trashed > 0 {
+        println!(
+            "  to Trash      {}  {}",
+            human(t.trashed).yellow().bold(),
+            "(recoverable until emptied)".dimmed()
+        );
+    }
+    if t.kept > 0 {
+        println!(
+            "  left in use   {}  {}",
+            human(t.kept).cyan().bold(),
+            "(skipped as long as it stays in use)".dimmed()
+        );
+    }
+    if t.needs_tick > 0 {
+        println!(
+            "  not included  {}  {}",
+            human(t.needs_tick).bold(),
+            "(personal or active — only goes if you tick it)".dimmed()
+        );
+    }
+    println!();
+    println!(
+        "{}",
+        "This is what `clean --yes`, `smart --yes` and a scheduled run would do right now."
+            .dimmed()
+    );
+}
+
+/// One past run from the journal: when, what command, the totals, then the
+/// heaviest things it touched.
+pub fn print_run(run: &[crate::journal::Entry]) {
+    let Some(first) = run.first() else { return };
+    let sum = |action: &str| -> u64 {
+        run.iter()
+            .filter(|e| e.action == action)
+            .map(|e| e.bytes)
+            .sum()
+    };
+    let count = |action: &str| run.iter().filter(|e| e.action == action).count();
+    println!();
+    println!(
+        "{}  {}",
+        crate::journal::format_ts(first.ts).bold(),
+        first.command.dimmed()
+    );
+    let freed = sum("deleted") + sum("emptied") + sum("ran");
+    let mut parts = vec![format!("freed {}", human(freed))];
+    if count("trashed") > 0 {
+        parts.push(format!("to Trash {}", human(sum("trashed"))));
+    }
+    if count("skipped") > 0 {
+        parts.push(format!("{} left in use", count("skipped")));
+    }
+    if count("failed") > 0 {
+        parts.push(format!("{} failed", count("failed")).yellow().to_string());
+    }
+    println!("  {}", parts.join(" · "));
+
+    const SHOWN: usize = 10;
+    let mut rows: Vec<&crate::journal::Entry> = run.iter().collect();
+    rows.sort_by_key(|e| Reverse(e.bytes));
+    for e in rows.iter().take(SHOWN) {
+        let detail = e
+            .detail
+            .as_deref()
+            .map(|d| format!("  ({d})"))
+            .unwrap_or_default();
+        println!(
+            "  {:<8} {}  {}{}",
+            e.action,
+            size_cell(e.bytes, 10),
+            pretty_path(std::path::Path::new(&e.path)),
+            detail.dimmed()
+        );
+    }
+    if rows.len() > SHOWN {
+        println!(
+            "  {}",
+            format!("… and {} more", rows.len() - SHOWN).dimmed()
+        );
+    }
 }
 
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {

@@ -157,6 +157,67 @@ pub struct Applied {
     pub error: Option<String>,
 }
 
+/// What applying a finding would do, worked out without touching anything.
+#[derive(Debug)]
+pub struct Plan {
+    /// `trash`, `delete`, `empty`, `run` or `skip`.
+    pub verb: &'static str,
+    /// Bytes the action would take away.
+    pub bytes: u64,
+    /// What it would leave in place because something is using it.
+    pub keeps: Vec<fsutil::Skipped>,
+}
+
+/// The dry run of `apply`: the same in-use checks, so a planned clean and a
+/// real one leave exactly the same things behind.
+pub fn plan(finding: &Finding, purge: bool, in_use: &InUse) -> Plan {
+    match &finding.action {
+        CleanAction::RemovePath => match in_use.why(&finding.path) {
+            Some(reason) => Plan {
+                verb: "skip",
+                bytes: 0,
+                keeps: vec![fsutil::Skipped {
+                    path: finding.path.clone(),
+                    size: finding.size,
+                    reason,
+                }],
+            },
+            None => Plan {
+                verb: if purge { "delete" } else { "trash" },
+                bytes: finding.size,
+                keeps: Vec::new(),
+            },
+        },
+        CleanAction::EmptyDir => {
+            let keeps: Vec<fsutil::Skipped> = std::fs::read_dir(&finding.path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    let reason = in_use.why(&path)?;
+                    Some(fsutil::Skipped {
+                        size: fsutil::path_size(&path),
+                        path,
+                        reason,
+                    })
+                })
+                .collect();
+            let kept: u64 = keeps.iter().map(|k| k.size).sum();
+            Plan {
+                verb: "empty",
+                bytes: finding.size.saturating_sub(kept),
+                keeps,
+            }
+        }
+        CleanAction::Command(_) => Plan {
+            verb: "run",
+            bytes: finding.size,
+            keeps: Vec::new(),
+        },
+    }
+}
+
 /// Runs a finding's action and measures what it achieved. Nothing in use is
 /// touched: a path something is using is skipped whole, and emptying a folder
 /// leaves its busy entries behind. `purge` forces a real delete for
@@ -261,6 +322,32 @@ mod tests {
         .remeasure(Remeasure::Dirs(vec![cache.clone()]));
         let freed = apply(&half, false, &in_use).bytes;
         assert!(freed >= 400_000 && freed < before, "{freed} of {before}");
+    }
+
+    #[test]
+    fn a_plan_leaves_the_same_things_as_a_real_run_and_touches_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("Caches");
+        std::fs::create_dir_all(cache.join("busy")).unwrap();
+        std::fs::create_dir_all(cache.join("idle")).unwrap();
+        std::fs::write(cache.join("busy/db"), vec![0u8; 300_000]).unwrap();
+        std::fs::write(cache.join("idle/db"), vec![0u8; 300_000]).unwrap();
+        let size = fsutil::path_size(&cache);
+        let busy = cache.join("busy/db");
+        let in_use = InUse::with(&[(busy.to_str().unwrap(), "ShipIt")], &[], dir.path());
+
+        let finding = Finding::dir(cache.clone(), size, CleanAction::EmptyDir);
+        let planned = plan(&finding, false, &in_use);
+
+        assert_eq!(planned.verb, "empty");
+        assert_eq!(planned.keeps.len(), 1);
+        assert_eq!(planned.keeps[0].path, cache.join("busy"));
+        assert!(planned.bytes < size);
+        assert!(cache.join("idle/db").exists(), "a plan must not delete");
+
+        let applied = apply(&finding, false, &in_use);
+        assert_eq!(applied.skipped.len(), 1);
+        assert_eq!(applied.skipped[0].path, planned.keeps[0].path);
     }
 
     #[test]

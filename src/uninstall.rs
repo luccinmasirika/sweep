@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::apps::{self, App};
 use crate::fsutil;
 use crate::inuse::InUse;
+use crate::journal;
 use crate::ui;
 
 /// `uninstall` removes an app and its whole footprint — the `.app` bundle plus
@@ -163,14 +164,19 @@ fn uninstall_one(
     let mut failures = 0;
     for (p, size) in footprint.iter().zip(sizes) {
         if let Some(reason) = in_use.why(p) {
+            journal::record("skipped", p, size, Some(&reason));
             ui::warn(&format!("left {} ({reason})", ui::pretty_path(p)));
             continue;
         }
         match fsutil::remove_path(p, purge) {
-            Ok(Some(id)) => trash.record(id, size),
-            Ok(None) => {}
+            Ok(Some(id)) => {
+                trash.record(id, size);
+                journal::record("trashed", p, size, Some(&app.name));
+            }
+            Ok(None) => journal::record("deleted", p, size, Some(&app.name)),
             Err(e) => {
                 failures += 1;
+                journal::record("failed", p, size, Some(&format!("{e:#}")));
                 ui::warn(&format!("{}: {e}", ui::pretty_path(p)));
             }
         }

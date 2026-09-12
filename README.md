@@ -36,6 +36,7 @@ are also attached to each [GitHub release](https://github.com/luccinmasirika/swe
 sweep scan                 # analyse only, delete nothing
 sweep scan --json          # same, as machine-readable JSON
 sweep clean                # free space, confirming before each target
+sweep clean --dry-run      # exactly what would go, and what's left in use
 sweep clean --yes          # skip the prompts (only safe, idle items)
 sweep clean --only projects,app-caches
 sweep clean --aggressive   # prune all unused Docker images, heavier dev caches
@@ -48,6 +49,7 @@ sweep maintenance          # flush DNS, rebuild Spotlight, reset Launch Services
 sweep doctor               # diagnose where space is going
 sweep doctor --fix         # also delete APFS local snapshots and empty every Trash
 sweep schedule install     # run `sweep smart` on a recurring launchd schedule
+sweep log                  # what recent cleans did, scheduled ones included
 sweep config               # print the effective configuration
 ```
 
@@ -89,6 +91,25 @@ had those files open, or APFS local snapshots keeping the data:
    freed       2.10 MB
    not removed 3.15 MB  (1 item(s) wouldn't delete)
      Permission denied (os error 13):  ~/Library/Caches/locked-app
+```
+
+### Checking what a clean does
+
+`clean --dry-run` (and `smart --dry-run`) runs every check a real clean would —
+including what's in use right now — and prints the result without touching
+anything: each item it would empty, trash, delete or run, what it would leave
+in place and why, and what it leaves out because it needs a deliberate tick.
+It's exactly what `clean --yes`, `smart --yes` and a scheduled run would do.
+
+Every run that changes the disk is recorded, one line per item, in
+`~/Library/Application Support/sweep/journal.log` — not under `~/Library/Logs`,
+which sweep itself empties. `sweep log` shows the last runs:
+
+```
+2026-09-13 01:02  sweep smart --yes
+  freed 2.10 MB · 1 left in use
+  skipped     3.15 MB  ~/Library/Caches/busy-app  (open in tail)
+  emptied     2.10 MB  ~/Library/Caches
 ```
 
 In the per-target menu, the default action cleans the safe items only — the

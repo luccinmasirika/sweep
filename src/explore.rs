@@ -5,6 +5,7 @@ use anyhow::{bail, Result};
 use serde::Serialize;
 
 use crate::inuse::InUse;
+use crate::journal;
 use crate::{fsutil, ui};
 
 /// At most this many rows in the non-interactive tree.
@@ -125,7 +126,10 @@ fn browse(mut cwd: PathBuf) -> Result<()> {
                     ));
                 } else if ui::confirm(&format!("Move {} to Trash?", ui::pretty_path(&item.path)))? {
                     match fsutil::remove_path(&item.path, false) {
-                        Ok(_) => ui::ok("moved to Trash"),
+                        Ok(_) => {
+                            journal::record("trashed", &item.path, item.size, None);
+                            ui::ok("moved to Trash");
+                        }
                         Err(e) => ui::warn(&format!("{e}")),
                     }
                 }

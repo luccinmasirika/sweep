@@ -102,7 +102,7 @@ impl InUse {
     }
 
     #[cfg(test)]
-    fn with(open: &[(&str, &str)], apps: &[(&str, &str)], library: &Path) -> Self {
+    pub(crate) fn with(open: &[(&str, &str)], apps: &[(&str, &str)], library: &Path) -> Self {
         let mut open: Vec<_> = open
             .iter()
             .map(|(p, c)| (PathBuf::from(p), c.to_string()))

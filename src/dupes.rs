@@ -7,6 +7,7 @@ use jwalk::WalkDir;
 use serde::Serialize;
 
 use crate::inuse::InUse;
+use crate::journal;
 use crate::{fsutil, ui};
 
 /// Files smaller than this are ignored — deduping kilobyte files isn't worth the
@@ -66,6 +67,7 @@ pub fn run(start: Option<PathBuf>, json: bool) -> Result<()> {
                         if let Some(id) = id {
                             trash.record(id, set.size);
                         }
+                        journal::record("trashed", p, set.size, Some("duplicate"));
                         ui::ok(&format!("trashed {}", ui::pretty_path(p)));
                     }
                     Err(e) => ui::warn(&format!("{}: {e}", ui::pretty_path(p))),

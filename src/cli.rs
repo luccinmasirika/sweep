@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -7,9 +7,11 @@ use crate::config::Config;
 use crate::exec;
 use crate::fsutil;
 use crate::inuse::InUse;
-use crate::report::{apply, Finding, Report};
+use crate::journal;
+use crate::report::{apply, CleanAction, Finding, Report};
 use crate::targets;
 use crate::ui;
+use owo_colors::OwoColorize;
 
 #[derive(Parser)]
 #[command(
@@ -53,6 +55,9 @@ pub enum Command {
         /// Delete outright instead of moving removable items to the Trash
         #[arg(long)]
         purge: bool,
+        /// Show exactly what would go and what would be left in use, touching nothing
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Browse what's using space and delete interactively
     Explore {
@@ -92,6 +97,15 @@ pub enum Command {
         /// Delete outright instead of moving removable items to the Trash
         #[arg(long)]
         purge: bool,
+        /// Show exactly what would go and what would be left in use, touching nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show what recent cleans did to the disk, scheduled ones included
+    Log {
+        /// How many runs to show
+        #[arg(long, default_value_t = 3)]
+        runs: usize,
     },
     /// Manage a recurring cleanup agent (launchd)
     Schedule {
@@ -110,7 +124,7 @@ fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
-pub(crate) fn collect(cfg: &Config, only: &[String]) -> Result<Vec<Report>> {
+pub fn collect(cfg: &Config, only: &[String]) -> Result<Vec<Report>> {
     let chosen = targets::all()
         .into_iter()
         .filter(|t| t.enabled(cfg))
@@ -144,10 +158,16 @@ pub fn run_clean(
     aggressive: bool,
     volumes: bool,
     purge: bool,
+    dry_run: bool,
 ) -> Result<u32> {
     let mut cfg = cfg.clone();
     cfg.aggressive = aggressive || volumes;
     cfg.prune_volumes = volumes;
+
+    if dry_run {
+        print_plan(&collect(&cfg, only)?, purge);
+        return Ok(0);
+    }
 
     // Without a terminal there's no one to drive the menus, so behave like --yes.
     let guided = !yes && interactive();
@@ -194,6 +214,51 @@ pub fn run_clean(
         outcome.failures += offer_to_empty(&outcome.trash)?;
     }
     Ok(outcome.failures)
+}
+
+/// What `clean --yes` would do right now, item by item, with nothing touched:
+/// the safe items and exactly what each leaves in use, then everything that
+/// would need a deliberate tick. This is what a scheduled run will do.
+pub fn print_plan(reports: &[Report], purge: bool) {
+    let in_use = InUse::capture();
+    let mut totals = ui::PlanTotals::default();
+    for report in reports.iter().filter(|r| !r.is_empty()) {
+        ui::print_plan_header(report);
+        for finding in report.findings.iter().filter(|f| f.auto()) {
+            let planned = crate::report::plan(finding, purge, &in_use);
+            ui::print_plan_row(finding, &planned);
+            totals.add(&planned);
+        }
+        for finding in report.findings.iter().filter(|f| !f.auto()) {
+            ui::print_tick_row(finding);
+            totals.needs_tick += finding.size;
+        }
+    }
+    ui::print_plan_totals(&totals);
+}
+
+/// Recent runs from the journal, newest last.
+pub fn run_log(json: bool, runs: usize) -> Result<()> {
+    let entries = journal::read();
+    let recent = journal::last_runs(&entries, runs);
+    if json {
+        let flat: Vec<&journal::Entry> = recent.iter().flat_map(|r| r.iter()).collect();
+        return ui::print_json(&flat);
+    }
+    if recent.is_empty() {
+        println!("Nothing recorded yet.");
+        if let Some(path) = journal::path() {
+            println!(
+                "  {}",
+                format!("runs are logged to {}", ui::pretty_path(&path)).dimmed()
+            );
+        }
+        return Ok(());
+    }
+    for run in recent {
+        ui::print_run(run);
+    }
+    Ok(())
 }
 
 /// The disk as it was before cleaning, to compare the result against.
@@ -279,7 +344,10 @@ pub(crate) fn offer_to_empty(trash: &fsutil::TrashLog) -> Result<u32> {
     let mut failures = 0;
     for (path, size) in &found {
         match fsutil::delete_from_trash(path) {
-            Ok(()) => freed += size,
+            Ok(()) => {
+                freed += size;
+                journal::record("deleted", path, *size, Some("emptied from the Trash"));
+            }
             Err(e) => {
                 failures += 1;
                 ui::warn(&format!("{}: {e}", ui::pretty_path(path)));
@@ -290,6 +358,34 @@ pub(crate) fn offer_to_empty(trash: &fsutil::TrashLog) -> Result<u32> {
     Ok(failures)
 }
 
+/// Write down what one finding did, so an unattended run can be checked later.
+fn journal_applied(finding: &Finding, purge: bool, applied: &crate::report::Applied) {
+    let path = &finding.path;
+    if let Some(e) = &applied.error {
+        journal::record("failed", path, applied.bytes, Some(e));
+    } else if applied.trashed.is_some() {
+        journal::record("trashed", path, applied.bytes, None);
+    } else {
+        match &finding.action {
+            CleanAction::RemovePath if !applied.skipped.is_empty() => {}
+            CleanAction::RemovePath if purge => {
+                journal::record("deleted", path, applied.bytes, None)
+            }
+            CleanAction::RemovePath => {}
+            CleanAction::EmptyDir => journal::record("emptied", path, applied.bytes, None),
+            CleanAction::Command(cmd) => {
+                journal::record("ran", path, applied.bytes, Some(&cmd.join(" ")))
+            }
+        }
+    }
+    for s in &applied.skipped {
+        journal::record("skipped", &s.path, s.size, Some(&s.reason));
+    }
+    for s in &applied.failed {
+        journal::record("failed", &s.path, s.size, Some(&s.reason));
+    }
+}
+
 /// Apply a batch of findings with a progress bar.
 pub(crate) fn apply_findings(chosen: &[&Finding], purge: bool, in_use: &InUse) -> Outcome {
     let mut outcome = Outcome::default();
@@ -297,6 +393,7 @@ pub(crate) fn apply_findings(chosen: &[&Finding], purge: bool, in_use: &InUse) -
     for finding in chosen {
         pb.set_message(ui::pretty_path(&finding.path));
         let applied = apply(finding, purge, in_use);
+        journal_applied(finding, purge, &applied);
         match applied.trashed {
             Some(id) => outcome.trash.record(id, applied.bytes),
             None => outcome.freed += applied.bytes,
@@ -359,9 +456,14 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
                     continue;
                 };
                 let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), id];
-                if let Err(e) = exec::run(&cmd) {
-                    failures += 1;
-                    ui::warn(&format!("{snap}: {e} (try with sudo)"));
+                match exec::run(&cmd) {
+                    Ok(()) => {
+                        journal::record("deleted", Path::new(snap), 0, Some("local snapshot"))
+                    }
+                    Err(e) => {
+                        failures += 1;
+                        ui::warn(&format!("{snap}: {e} (try with sudo)"));
+                    }
                 }
             }
             ui::ok("local snapshots cleared");
@@ -388,7 +490,10 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
             // look for.
             for trash in &trashes {
                 match fsutil::empty_dir(trash, &InUse::default()) {
-                    Ok(emptied) => ui::print_failed(&emptied.failed),
+                    Ok(emptied) => {
+                        journal::record("emptied", trash, 0, Some("Trash"));
+                        ui::print_failed(&emptied.failed);
+                    }
                     Err(e) => {
                         failures += 1;
                         ui::warn(&format!("{}: {e}", ui::pretty_path(trash)));
