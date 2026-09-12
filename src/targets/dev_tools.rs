@@ -7,7 +7,7 @@ use crate::catalog;
 use crate::config::Config;
 use crate::exec;
 use crate::fsutil;
-use crate::report::{CleanAction, Finding, Report};
+use crate::report::{CleanAction, Finding, Remeasure, Report};
 
 pub struct DevTools;
 
@@ -26,31 +26,29 @@ impl Target for DevTools {
 
         if exec::command_exists("brew") {
             f.push(
-                sized_finding(
+                probe_finding(
                     "Homebrew cache",
-                    brew_cleanup_size(),
+                    brew_cleanup_size,
                     &["brew", "cleanup", "-s"],
                 )
                 .with_note("old versions and downloads"),
             );
             let orphans = brew_orphans();
+            let count = orphans.len();
             f.push(
-                sized_finding(
-                    "Homebrew orphans",
-                    orphans.iter().map(|p| fsutil::dir_size(p)).sum(),
-                    &["brew", "autoremove"],
-                )
-                .with_note(format!("{} unneeded formulae", orphans.len())),
+                dirs_finding("Homebrew orphans", orphans, &["brew", "autoremove"])
+                    .with_note(format!("{count} unneeded formulae")),
             );
         }
 
         if exec::command_exists("npm") {
-            let size = cache_size(&["npm", "config", "get", "cache"]);
             f.push(
-                Finding::dir(
-                    PathBuf::from("npm cache"),
-                    size,
-                    CleanAction::Command(words(&["npm", "cache", "clean", "--force"])),
+                dirs_finding(
+                    "npm cache",
+                    store_path(&["npm", "config", "get", "cache"])
+                        .into_iter()
+                        .collect(),
+                    &["npm", "cache", "clean", "--force"],
                 )
                 .with_note("npm"),
             );
@@ -58,9 +56,13 @@ impl Target for DevTools {
 
         if exec::command_exists("pnpm") {
             let active = store_path(&["pnpm", "store", "path"]);
-            let size = active.as_deref().map(fsutil::dir_size).unwrap_or(0);
             f.push(
-                sized_finding("pnpm store", size, &["pnpm", "store", "prune"]).with_note("pnpm"),
+                dirs_finding(
+                    "pnpm store",
+                    active.iter().cloned().collect(),
+                    &["pnpm", "store", "prune"],
+                )
+                .with_note("pnpm"),
             );
             // `pnpm store prune` only knows about the store the current pnpm
             // uses; a major upgrade leaves the previous `store/vN` behind,
@@ -70,9 +72,9 @@ impl Target for DevTools {
 
         if exec::command_exists("yarn") {
             f.push(
-                sized_finding(
+                dirs_finding(
                     "yarn cache",
-                    cache_size(&["yarn", "cache", "dir"]),
+                    store_path(&["yarn", "cache", "dir"]).into_iter().collect(),
                     &["yarn", "cache", "clean"],
                 )
                 .with_note("yarn"),
@@ -104,17 +106,11 @@ impl Target for DevTools {
         }
 
         if cfg.aggressive && exec::command_exists("go") {
-            let modcache = cfg.home.join("go/pkg/mod");
-            let size = if modcache.is_dir() {
-                fsutil::dir_size(&modcache)
-            } else {
-                0
-            };
             f.push(
-                Finding::dir(
-                    PathBuf::from("go module cache"),
-                    size,
-                    CleanAction::Command(words(&["go", "clean", "-modcache"])),
+                dirs_finding(
+                    "go module cache",
+                    vec![cfg.home.join("go/pkg/mod")],
+                    &["go", "clean", "-modcache"],
                 )
                 .with_note("re-downloaded on next build"),
             );
@@ -122,9 +118,9 @@ impl Target for DevTools {
 
         if exec::command_exists("bun") {
             f.push(
-                sized_finding(
+                dirs_finding(
                     "bun cache",
-                    fsutil::dir_size(&cfg.home.join(".bun/install/cache")),
+                    vec![cfg.home.join(".bun/install/cache")],
                     &["bun", "pm", "cache", "rm"],
                 )
                 .with_note("bun"),
@@ -133,9 +129,9 @@ impl Target for DevTools {
 
         if exec::command_exists("deno") {
             f.push(
-                sized_finding(
+                dirs_finding(
                     "deno cache",
-                    fsutil::dir_size(&cfg.home.join("Library/Caches/deno")),
+                    vec![cfg.home.join("Library/Caches/deno")],
                     &["deno", "clean"],
                 )
                 .with_note("deno"),
@@ -143,26 +139,28 @@ impl Target for DevTools {
         }
 
         if exec::command_exists("uv") {
-            f.push(sized_finding(
+            f.push(dirs_finding(
                 "uv cache",
-                cache_size(&["uv", "cache", "dir"]),
+                store_path(&["uv", "cache", "dir"]).into_iter().collect(),
                 &["uv", "cache", "clean"],
             ));
         }
 
         if exec::command_exists("composer") {
-            f.push(sized_finding(
+            f.push(dirs_finding(
                 "composer cache",
-                cache_size(&["composer", "config", "--global", "cache-dir"]),
+                store_path(&["composer", "config", "--global", "cache-dir"])
+                    .into_iter()
+                    .collect(),
                 &["composer", "clear-cache"],
             ));
         }
 
         if exec::command_exists("conda") {
             let pkgs = store_path(&["conda", "info", "--base"]).map(|base| base.join("pkgs"));
-            f.push(sized_finding(
+            f.push(dirs_finding(
                 "conda packages",
-                pkgs.as_deref().map(fsutil::dir_size).unwrap_or(0),
+                pkgs.into_iter().collect(),
                 &["conda", "clean", "-a", "-y"],
             ));
         }
@@ -170,9 +168,9 @@ impl Target for DevTools {
         // The Command Line Tools ship `xcrun` without `simctl`; only a full
         // Xcode has simulators to delete.
         if let Some(devices) = unavailable_simulators(&cfg.home) {
-            f.push(sized_finding(
+            f.push(dirs_finding(
                 "unavailable simulators",
-                devices.iter().map(|p| fsutil::dir_size(p)).sum(),
+                devices,
                 &["xcrun", "simctl", "delete", "unavailable"],
             ));
         }
@@ -190,6 +188,10 @@ impl Target for DevTools {
                         usage.reclaimable(cfg.aggressive, cfg.prune_volumes),
                         CleanAction::Command(docker_prune_cmd(cfg.aggressive, cfg.prune_volumes)),
                     )
+                    .remeasure(Remeasure::Probe(docker_probe(
+                        cfg.aggressive,
+                        cfg.prune_volumes,
+                    )))
                     .with_note("inside the VM disk — see vm-images for the disk itself"),
                 );
             }
@@ -205,20 +207,34 @@ impl Target for DevTools {
     }
 }
 
-/// A cleanup run through a tool's own CLI, but weighed first. Without the size
-/// these land at the bottom of a list sorted by bytes, so a 5 GB package store
-/// reads as nothing to clean.
-fn sized_finding(label: &str, size: u64, cmd: &[&str]) -> Finding {
+/// A cleanup run through a tool's own CLI, weighed by the folders it clears —
+/// before, so it sorts where it belongs, and again after, so the result is
+/// what really went. Missing folders weigh nothing.
+fn dirs_finding(label: &str, dirs: Vec<PathBuf>, cmd: &[&str]) -> Finding {
+    let size = dirs.iter().map(|d| fsutil::path_size(d)).sum();
     Finding::dir(PathBuf::from(label), size, CleanAction::Command(words(cmd)))
+        .remeasure(Remeasure::Dirs(dirs))
 }
 
-/// Size of the directory a tool reports as its cache (`pnpm store path`,
-/// `yarn cache dir`, …). Missing tool or missing directory reads as zero.
-fn cache_size(query: &[&str]) -> u64 {
-    store_path(query)
-        .as_deref()
-        .map(fsutil::dir_size)
-        .unwrap_or(0)
+/// The same, for a tool that can only report its own reclaimable size.
+fn probe_finding(label: &str, probe: fn() -> u64, cmd: &[&str]) -> Finding {
+    Finding::dir(
+        PathBuf::from(label),
+        probe(),
+        CleanAction::Command(words(cmd)),
+    )
+    .remeasure(Remeasure::Probe(probe))
+}
+
+/// What `docker system prune` with these flags would still remove, asked
+/// again after it ran. One function per flag set, since a remeasure can't carry
+/// state.
+fn docker_probe(all_images: bool, volumes: bool) -> fn() -> u64 {
+    match (all_images, volumes) {
+        (false, _) => || docker_usage().map_or(0, |u| u.reclaimable(false, false)),
+        (true, false) => || docker_usage().map_or(0, |u| u.reclaimable(true, false)),
+        (true, true) => || docker_usage().map_or(0, |u| u.reclaimable(true, true)),
+    }
 }
 
 /// The directory a tool prints as its cache location, if it exists.

@@ -3,13 +3,13 @@ use anyhow::Result;
 use crate::config::Config;
 use crate::inuse::InUse;
 use crate::report::Finding;
-use crate::{cli, fsutil, ui};
+use crate::{cli, ui};
 
 /// One-click care: scan every enabled target, show the summary, then clean only
 /// the safe, idle items (never personal data or active projects) after a single
 /// confirmation. Removable items go to the Trash unless `--purge`.
 pub fn run(cfg: &Config, yes: bool, purge: bool) -> Result<u32> {
-    let before = fsutil::free_space_root();
+    let before = cli::Baseline::now();
     let reports = cli::collect(cfg, &[])?;
     ui::print_summary(&reports);
 
@@ -37,13 +37,7 @@ pub fn run(cfg: &Config, yes: bool, purge: bool) -> Result<u32> {
     }
 
     let mut outcome = cli::apply_findings(&safe, purge, &InUse::capture());
-    ui::print_freed(
-        outcome.freed,
-        outcome.trash.bytes(),
-        before,
-        fsutil::free_space_root(),
-    );
-    ui::print_skipped(&outcome.skipped);
+    outcome.report(&before);
     if !yes && interactive() {
         outcome.failures += cli::offer_to_empty(&outcome.trash)?;
     }

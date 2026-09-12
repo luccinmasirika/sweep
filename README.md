@@ -78,6 +78,19 @@ Deleting under a running app can crash it, corrupt its cache or break an update
 halfway, and a file that's still open doesn't give its space back until it's
 closed anyway. `uninstall` refuses outright while the app is running.
 
+The numbers at the end are measured, not the scan's estimates. Each folder is
+weighed again after it's emptied, and each cleanup command's cache again after
+it ran, so a command that frees nothing reports nothing. Entries that refuse to
+delete are listed with the reason instead of counted as gone. When the disk
+gained less than was deleted, sweep says why — space still held by apps that
+had those files open, or APFS local snapshots keeping the data:
+
+```
+   freed       2.10 MB
+   not removed 3.15 MB  (1 item(s) wouldn't delete)
+     Permission denied (os error 13):  ~/Library/Caches/locked-app
+```
+
 In the per-target menu, the default action cleans the safe items only — the
 same set `--yes` would take. Personal files, active projects and the Trash are
 reached through "Choose items…", so a stray Enter can't delete them.

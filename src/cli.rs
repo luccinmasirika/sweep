@@ -152,7 +152,7 @@ pub fn run_clean(
     // Without a terminal there's no one to drive the menus, so behave like --yes.
     let guided = !yes && interactive();
 
-    let before = fsutil::free_space_root();
+    let before = Baseline::now();
     let reports = collect(&cfg, only)?;
     let mut outcome = Outcome::default();
     // Taken when the first item is about to go, not before the menus: an app
@@ -189,17 +189,26 @@ pub fn run_clean(
         ui::ok(&format!("{} cleaned", report.target));
     }
 
-    ui::print_freed(
-        outcome.freed,
-        outcome.trash.bytes(),
-        before,
-        fsutil::free_space_root(),
-    );
-    ui::print_skipped(&outcome.skipped);
+    outcome.report(&before);
     if guided {
         outcome.failures += offer_to_empty(&outcome.trash)?;
     }
     Ok(outcome.failures)
+}
+
+/// The disk as it was before cleaning, to compare the result against.
+pub(crate) struct Baseline {
+    free: Option<u64>,
+    held: Option<u64>,
+}
+
+impl Baseline {
+    pub(crate) fn now() -> Self {
+        Self {
+            free: fsutil::free_space_root(),
+            held: fsutil::held_by_open_files(),
+        }
+    }
 }
 
 /// What applying a batch of findings did. Trashed items are kept apart from
@@ -210,6 +219,7 @@ pub(crate) struct Outcome {
     pub failures: u32,
     pub trash: fsutil::TrashLog,
     pub skipped: Vec<fsutil::Skipped>,
+    pub failed: Vec<fsutil::Skipped>,
 }
 
 impl Outcome {
@@ -218,6 +228,27 @@ impl Outcome {
         self.failures += other.failures;
         self.trash.extend(other.trash);
         self.skipped.extend(other.skipped);
+        self.failed.extend(other.failed);
+    }
+
+    /// Print what was freed, what was left and why, and — when the disk didn't
+    /// gain what was deleted — the reason it hasn't yet.
+    pub(crate) fn report(&self, before: &Baseline) {
+        let after = Baseline::now();
+        ui::print_freed(self.freed, self.trash.bytes(), before.free, after.free);
+        ui::print_skipped(&self.skipped);
+        ui::print_failed(&self.failed);
+        let held = after
+            .held
+            .zip(before.held)
+            .map(|(a, b)| a.saturating_sub(b))
+            .unwrap_or(0);
+        ui::print_gap(
+            self.freed,
+            before.free.zip(after.free),
+            held,
+            fsutil::local_snapshots().len(),
+        );
     }
 }
 
@@ -265,19 +296,17 @@ pub(crate) fn apply_findings(chosen: &[&Finding], purge: bool, in_use: &InUse) -
     let pb = ui::clean_progress(chosen.len() as u64);
     for finding in chosen {
         pb.set_message(ui::pretty_path(&finding.path));
-        match apply(finding, purge, in_use) {
-            Ok(applied) => {
-                match applied.trashed {
-                    Some(id) => outcome.trash.record(id, applied.bytes),
-                    None => outcome.freed += applied.bytes,
-                }
-                outcome.skipped.extend(applied.skipped);
-            }
-            Err(e) => {
-                outcome.failures += 1;
-                ui::warn(&format!("{}: {e}", ui::pretty_path(&finding.path)));
-            }
+        let applied = apply(finding, purge, in_use);
+        match applied.trashed {
+            Some(id) => outcome.trash.record(id, applied.bytes),
+            None => outcome.freed += applied.bytes,
         }
+        if let Some(e) = applied.error {
+            outcome.failures += 1;
+            pb.suspend(|| ui::warn(&format!("{}: {e}", ui::pretty_path(&finding.path))));
+        }
+        outcome.skipped.extend(applied.skipped);
+        outcome.failed.extend(applied.failed);
         pb.inc(1);
     }
     pb.finish_and_clear();
@@ -358,9 +387,12 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
             // Nothing runs out of a Trash folder, so there's nothing in use to
             // look for.
             for trash in &trashes {
-                if let Err(e) = fsutil::empty_dir(trash, &InUse::default()) {
-                    failures += 1;
-                    ui::warn(&format!("{}: {e}", ui::pretty_path(trash)));
+                match fsutil::empty_dir(trash, &InUse::default()) {
+                    Ok(emptied) => ui::print_failed(&emptied.failed),
+                    Err(e) => {
+                        failures += 1;
+                        ui::warn(&format!("{}: {e}", ui::pretty_path(trash)));
+                    }
                 }
             }
             ui::ok("Trash emptied");

@@ -416,15 +416,24 @@ pub struct Skipped {
     pub reason: String,
 }
 
+/// What emptying a directory left behind.
+#[derive(Debug, Default)]
+pub struct Emptied {
+    /// Entries left alone because something is using them.
+    pub skipped: Vec<Skipped>,
+    /// Entries that wouldn't delete, with what's left of each and the reason.
+    pub failed: Vec<Skipped>,
+}
+
 /// Empty a directory, keeping the directory itself. Caches are pure regenerable
 /// junk, so entries are hard-deleted rather than sent to the Trash. Anything in
 /// use — open by a process, belonging to a running app or a system service —
-/// is left in place and returned, as are protected toolchain paths. Other
-/// entries that won't delete are skipped instead of aborting.
-pub fn empty_dir(path: &Path, in_use: &crate::inuse::InUse) -> Result<Vec<Skipped>> {
-    let mut skipped = Vec::new();
+/// is left in place, as are protected toolchain paths. An entry that refuses to
+/// delete doesn't stop the rest; it's reported instead of passed off as gone.
+pub fn empty_dir(path: &Path, in_use: &crate::inuse::InUse) -> Result<Emptied> {
+    let mut emptied = Emptied::default();
     if !path.is_dir() {
-        return Ok(skipped);
+        return Ok(emptied);
     }
     let roots = protected_roots();
     for entry in fs::read_dir(path)? {
@@ -434,18 +443,39 @@ pub fn empty_dir(path: &Path, in_use: &crate::inuse::InUse) -> Result<Vec<Skippe
             continue;
         }
         if let Some(reason) = in_use.why(&p) {
-            skipped.push(Skipped {
+            emptied.skipped.push(Skipped {
                 size: path_size(&p),
                 path: p,
                 reason,
             });
             continue;
         }
-        if let Ok(meta) = fs::symlink_metadata(&p) {
-            let _ = hard_remove(&p, &meta);
+        let Ok(meta) = fs::symlink_metadata(&p) else {
+            continue;
+        };
+        if let Err(e) = hard_remove(&p, &meta) {
+            emptied.failed.push(Skipped {
+                size: path_size(&p),
+                reason: e.root_cause().to_string(),
+                path: p,
+            });
         }
     }
-    Ok(skipped)
+    Ok(emptied)
+}
+
+/// Bytes held by files that have been deleted but are still open somewhere.
+/// Their space only comes back when the process holding them lets go.
+pub fn held_by_open_files() -> Option<u64> {
+    let out = crate::exec::capture(&["lsof", "-n", "-P", "+L1", "-Fs"].map(String::from)).ok()?;
+    Some(parse_held(&out))
+}
+
+/// `lsof -F s` prints each file's size as its own `s<bytes>` line.
+fn parse_held(out: &str) -> u64 {
+    out.lines()
+        .filter_map(|l| l.strip_prefix('s')?.parse::<u64>().ok())
+        .sum()
 }
 
 /// An iCloud file evicted from local storage: it reports its full size but
@@ -655,7 +685,7 @@ pub fn is_update_snapshot(line: &str) -> bool {
     line.contains("com.apple.os.update") || line.contains("MSUPrepareUpdate")
 }
 
-fn local_snapshots() -> Vec<String> {
+pub fn local_snapshots() -> Vec<String> {
     crate::exec::capture(&["tmutil".into(), "listlocalsnapshots".into(), "/".into()])
         .map(|out| {
             out.lines()
@@ -913,7 +943,8 @@ pub(crate) mod tests {
         // On-disk size: at least the bytes written, rounded up to whole blocks.
         assert!(dir_size(dir.path()) >= 400_000);
 
-        empty_dir(dir.path(), &crate::inuse::InUse::default()).unwrap();
+        let emptied = empty_dir(dir.path(), &crate::inuse::InUse::default()).unwrap();
+        assert!(emptied.skipped.is_empty() && emptied.failed.is_empty());
         assert_eq!(dir_size(dir.path()), 0);
         assert!(dir.path().is_dir());
     }
@@ -1106,6 +1137,36 @@ pub(crate) mod tests {
 
         assert!(delete_from(&outside.join("thesis.pdf"), &[trash]).is_err());
         assert!(outside.join("thesis.pdf").exists());
+    }
+
+    #[test]
+    fn an_entry_that_wont_delete_is_reported_not_counted() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("gone.bin"), vec![0u8; 100_000]).unwrap();
+        let stuck = dir.path().join("stuck");
+        fs::create_dir(&stuck).unwrap();
+        fs::write(stuck.join("inside.bin"), vec![0u8; 100_000]).unwrap();
+        // A read-only folder: its contents can't be unlinked.
+        fs::set_permissions(&stuck, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let emptied = empty_dir(dir.path(), &crate::inuse::InUse::default()).unwrap();
+        fs::set_permissions(&stuck, fs::Permissions::from_mode(0o755)).unwrap();
+
+        if stuck.join("inside.bin").exists() {
+            assert_eq!(emptied.failed.len(), 1);
+            assert_eq!(emptied.failed[0].path, stuck);
+            assert!(emptied.failed[0].size >= 100_000);
+            assert!(!emptied.failed[0].reason.is_empty());
+        }
+        assert!(!dir.path().join("gone.bin").exists());
+    }
+
+    #[test]
+    fn sums_sizes_of_deleted_open_files() {
+        let out = "p512\nf4\ns314572800\nn/tmp/held.bin\np600\nf9\ns1024\nn/tmp/log\n";
+        assert_eq!(parse_held(out), 314_573_824);
+        assert_eq!(parse_held(""), 0);
     }
 
     #[test]

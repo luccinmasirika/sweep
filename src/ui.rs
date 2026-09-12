@@ -305,6 +305,78 @@ pub fn print_skipped(skipped: &[crate::fsutil::Skipped]) {
     }
 }
 
+/// Entries that refused to delete. Unlike in-use items these won't clear up by
+/// themselves, so each reason is shown.
+pub fn print_failed(failed: &[crate::fsutil::Skipped]) {
+    if failed.is_empty() {
+        return;
+    }
+    let bytes: u64 = failed.iter().map(|s| s.size).sum();
+    println!(
+        "   {}  {}  {}",
+        "not removed".yellow(),
+        human(bytes).yellow().bold(),
+        format!("({} item(s) wouldn't delete)", failed.len()).dimmed()
+    );
+    for s in failed.iter().take(3) {
+        println!(
+            "     {}  {}",
+            format!("{}:", s.reason).dimmed(),
+            pretty_path(&s.path).dimmed()
+        );
+    }
+    if failed.len() > 3 {
+        println!(
+            "     {}",
+            format!("… and {} more", failed.len() - 3).dimmed()
+        );
+    }
+}
+
+/// When the disk gained noticeably less than was deleted, say why rather than
+/// leave the two numbers contradicting each other.
+pub fn print_gap(freed: u64, free: Option<(u64, u64)>, held: u64, snapshots: usize) {
+    let Some((before, after)) = free else {
+        return;
+    };
+    let gained = after.saturating_sub(before);
+    if freed < 50_000_000 || gained >= freed / 10 * 8 {
+        return;
+    }
+    println!(
+        "   {}",
+        format!(
+            "the disk gained {} of the {} deleted:",
+            human(gained),
+            human(freed)
+        )
+        .dimmed()
+    );
+    if held > 10_000_000 {
+        println!(
+            "     {}",
+            format!(
+                "{} is still held by apps that had those files open — it comes back when they quit",
+                human(held)
+            )
+            .dimmed()
+        );
+    }
+    if snapshots > 0 {
+        println!(
+            "     {}",
+            format!(
+                "{snapshots} APFS local snapshot(s) still keep deleted data — see `sweep doctor`"
+            )
+            .dimmed()
+        );
+    }
+    println!(
+        "     {}",
+        "anything else writing to the disk meanwhile counts against it too".dimmed()
+    );
+}
+
 pub fn print_freed(freed: u64, trashed: u64, before: Option<u64>, after: Option<u64>) {
     println!();
     println!("{} {}", "✓".green().bold(), "Done".bold());

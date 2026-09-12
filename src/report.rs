@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
 use serde::Serialize;
 
 use crate::inuse::InUse;
@@ -35,6 +34,28 @@ pub struct Finding {
     /// empty because it couldn't be read is not an empty Trash.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub unreadable: bool,
+    /// How to weigh a command's target again once it has run.
+    #[serde(skip)]
+    pub remeasure: Option<Remeasure>,
+}
+
+/// A way to measure what a cleanup command left behind, so the result reports
+/// what actually went rather than the estimate made at scan time.
+#[derive(Debug, Clone)]
+pub enum Remeasure {
+    /// The folders the estimate was taken from.
+    Dirs(Vec<PathBuf>),
+    /// A tool's own dry run, asked again.
+    Probe(fn() -> u64),
+}
+
+impl Remeasure {
+    fn measure(&self) -> u64 {
+        match self {
+            Remeasure::Dirs(dirs) => dirs.iter().map(|d| fsutil::path_size(d)).sum(),
+            Remeasure::Probe(probe) => probe(),
+        }
+    }
 }
 
 impl Finding {
@@ -47,6 +68,7 @@ impl Finding {
             risky: false,
             stale: true,
             unreadable: false,
+            remeasure: None,
         }
     }
 
@@ -67,6 +89,11 @@ impl Finding {
 
     pub fn unreadable(mut self, unreadable: bool) -> Self {
         self.unreadable = unreadable;
+        self
+    }
+
+    pub fn remeasure(mut self, remeasure: Remeasure) -> Self {
+        self.remeasure = Some(remeasure);
         self
     }
 
@@ -115,55 +142,84 @@ impl Report {
     }
 }
 
-/// What running one finding did.
+/// What running one finding did, measured after the fact.
 #[derive(Debug, Default)]
 pub struct Applied {
-    /// Bytes it accounts for. For commands this is the estimate computed at
-    /// scan time, not a measured value.
+    /// Bytes that are really gone: re-measured from what's left, not taken
+    /// from the scan.
     pub bytes: u64,
     pub trashed: Option<fsutil::TrashId>,
+    /// Left alone because something is using it.
     pub skipped: Vec<fsutil::Skipped>,
+    /// Entries of an emptied folder that refused to delete.
+    pub failed: Vec<fsutil::Skipped>,
+    /// Why the whole action failed, if it did.
+    pub error: Option<String>,
 }
 
-/// Runs a finding's action. Nothing in use is touched: a path something is
-/// using is skipped whole, and emptying a folder leaves its in-use entries
-/// behind. `purge` forces a real delete for `RemovePath` instead of a move to
-/// Trash.
-pub fn apply(finding: &Finding, purge: bool, in_use: &InUse) -> Result<Applied> {
+/// Runs a finding's action and measures what it achieved. Nothing in use is
+/// touched: a path something is using is skipped whole, and emptying a folder
+/// leaves its busy entries behind. `purge` forces a real delete for
+/// `RemovePath` instead of a move to Trash.
+pub fn apply(finding: &Finding, purge: bool, in_use: &InUse) -> Applied {
     match &finding.action {
         CleanAction::RemovePath => {
             if let Some(reason) = in_use.why(&finding.path) {
-                return Ok(Applied {
+                return Applied {
                     skipped: vec![fsutil::Skipped {
                         path: finding.path.clone(),
                         size: finding.size,
                         reason,
                     }],
                     ..Applied::default()
-                });
+                };
             }
-            let trashed = fsutil::remove_path(&finding.path, purge)?;
-            Ok(Applied {
-                bytes: finding.size,
-                trashed,
-                ..Applied::default()
-            })
+            let result = fsutil::remove_path(&finding.path, purge);
+            // A delete that fails halfway still removed something.
+            let left = fsutil::path_size(&finding.path);
+            let bytes = finding.size.saturating_sub(left);
+            match result {
+                Ok(trashed) => Applied {
+                    bytes,
+                    trashed,
+                    ..Applied::default()
+                },
+                Err(e) => Applied {
+                    bytes,
+                    error: Some(format!("{e:#}")),
+                    ..Applied::default()
+                },
+            }
         }
-        CleanAction::EmptyDir => {
-            let skipped = fsutil::empty_dir(&finding.path, in_use)?;
-            let kept: u64 = skipped.iter().map(|s| s.size).sum();
-            Ok(Applied {
-                bytes: finding.size.saturating_sub(kept),
-                skipped,
+        CleanAction::EmptyDir => match fsutil::empty_dir(&finding.path, in_use) {
+            Ok(emptied) => Applied {
+                bytes: finding
+                    .size
+                    .saturating_sub(fsutil::path_size(&finding.path)),
+                skipped: emptied.skipped,
+                failed: emptied.failed,
                 ..Applied::default()
-            })
-        }
+            },
+            Err(e) => Applied {
+                error: Some(format!("{e:#}")),
+                ..Applied::default()
+            },
+        },
         CleanAction::Command(cmd) => {
-            exec::run(cmd)?;
-            Ok(Applied {
-                bytes: finding.size,
+            if let Err(e) = exec::run(cmd) {
+                return Applied {
+                    error: Some(format!("{e:#}")),
+                    ..Applied::default()
+                };
+            }
+            let bytes = match &finding.remeasure {
+                Some(r) => finding.size.saturating_sub(r.measure()),
+                None => finding.size,
+            };
+            Applied {
+                bytes,
                 ..Applied::default()
-            })
+            }
         }
     }
 }
@@ -171,6 +227,53 @@ pub fn apply(finding: &Finding, purge: bool, in_use: &InUse) -> Result<Applied> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn words(args: &[&str]) -> Vec<String> {
+        args.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn a_command_is_credited_with_what_it_removed_not_the_estimate() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(cache.join("keep")).unwrap();
+        std::fs::create_dir_all(cache.join("drop")).unwrap();
+        std::fs::write(cache.join("keep/a"), vec![0u8; 400_000]).unwrap();
+        std::fs::write(cache.join("drop/b"), vec![0u8; 400_000]).unwrap();
+        let before = fsutil::path_size(&cache);
+
+        let in_use = InUse::default();
+        // Does nothing: nothing was freed, whatever the scan estimated.
+        let idle = Finding::dir(
+            PathBuf::from("idle"),
+            before,
+            CleanAction::Command(words(&["true"])),
+        )
+        .remeasure(Remeasure::Dirs(vec![cache.clone()]));
+        assert_eq!(apply(&idle, false, &in_use).bytes, 0);
+
+        // Clears half of it: half is what counts.
+        let half = Finding::dir(
+            PathBuf::from("half"),
+            before,
+            CleanAction::Command(words(&["rm", "-rf", cache.join("drop").to_str().unwrap()])),
+        )
+        .remeasure(Remeasure::Dirs(vec![cache.clone()]));
+        let freed = apply(&half, false, &in_use).bytes;
+        assert!(freed >= 400_000 && freed < before, "{freed} of {before}");
+    }
+
+    #[test]
+    fn a_failed_command_frees_nothing_and_says_why() {
+        let finding = Finding::dir(
+            PathBuf::from("broken"),
+            1_000_000,
+            CleanAction::Command(words(&["false"])),
+        );
+        let applied = apply(&finding, false, &InUse::default());
+        assert_eq!(applied.bytes, 0);
+        assert!(applied.error.is_some());
+    }
 
     #[test]
     fn reclaimable_excludes_risky() {
