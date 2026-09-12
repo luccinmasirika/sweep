@@ -69,6 +69,8 @@ pub fn covered_roots(home: &Path) -> Vec<std::path::PathBuf> {
         ".bun",
         ".deno",
         "go/pkg/mod",
+        // applications
+        "Applications",
         // vm-images
         ".colima",
         ".lima",

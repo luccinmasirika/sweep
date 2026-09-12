@@ -68,6 +68,7 @@ projects that still look active.
 | `projects`      | Marker-aware home walk: project artifacts (`node_modules`, `target`, `build`…). |
 | `large-items`   | Biggest personal files/folders over a threshold (start unchecked).       |
 | `vm-images`     | Container/VM disk images (Colima, Docker, OrbStack, UTM, Parallels…).     |
+| `applications`  | Installed apps over 500 MB and leftover macOS installers (start unchecked). |
 | `heavy`         | Anything over 1 GB anywhere under `~`, by size alone — no name needed.    |
 | `privacy`       | Browser caches (safe) + cookies/history (start unchecked) + Mail downloads. |
 | `leftovers`     | Support files of uninstalled apps (opt-in; heuristic, starts unchecked). |
@@ -103,6 +104,16 @@ prunes Docker volumes — this destroys volume data, so it is never on by defaul
 volume — Data, Preboot, System, VM, Recovery all share one pool, so `df` on a
 single mount never shows the real picture — plus purgeable space, APFS local
 snapshots and the heaviest `~/Library` folders.
+
+It then accounts for the Data volume from its root: every top-level folder
+(`/Users`, `/Applications`, `/System`, `/private`, `/opt`…) sized, and whatever
+they don't add up to shown as a remainder rather than left out. The space macOS
+owns outside any home folder is named and explained — `AssetsV2` (Siri,
+dictation and Apple Intelligence models), `/private/var/folders`, the sleep
+image, the Spotlight index, Homebrew.
+
+Sizes never cross into another mounted volume, so an external disk or a network
+share mounted inside a folder neither inflates it nor stalls the scan.
 
 It also flags a **stalled macOS update**: an update that was staged and never
 finished leaves the system volume's seal broken, tens of gigabytes parked in

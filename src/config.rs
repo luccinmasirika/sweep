@@ -17,6 +17,8 @@ pub struct Config {
     pub privacy: bool,
     /// Container/VM disk images, which grow silently and never shrink back.
     pub vm_images: bool,
+    /// Installed apps big enough to matter, and leftover macOS installers.
+    pub applications: bool,
     /// Name-agnostic sweep for the heaviest items anywhere under `home`.
     pub heavy: bool,
     /// Off by default: leftovers detection is heuristic, so it is opt-in.
@@ -57,6 +59,7 @@ impl Default for Config {
             large_items: true,
             privacy: true,
             vm_images: true,
+            applications: true,
             heavy: true,
             leftovers: false,
             home: dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),

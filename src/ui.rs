@@ -58,6 +58,7 @@ fn icon(target: &str) -> &'static str {
         "projects" => "🏗 ",
         "large-items" => "📄",
         "vm-images" => "💽",
+        "applications" => "🧩",
         "heavy" => "🗻",
         "leftovers" => "👻",
         "privacy" => "🕵 ",
@@ -452,6 +453,10 @@ pub fn print_doctor(d: &crate::fsutil::Diagnosis) {
         }
     }
 
+    if let Some(v) = &d.data_volume {
+        print_data_volume(v);
+    }
+
     println!();
     println!("{}", "Heaviest ~/Library folders".bold());
     if d.library_dirs.is_empty() {
@@ -480,6 +485,44 @@ pub fn print_doctor(d: &crate::fsutil::Diagnosis) {
         "Run `sweep scan` to see the heaviest items by name, or `sweep clean` to free caches."
             .dimmed()
     );
+}
+
+fn print_data_volume(v: &crate::fsutil::DataVolume) {
+    println!();
+    println!(
+        "{}  {}",
+        "Data volume".bold(),
+        format!("{} in use", human(v.used)).dimmed()
+    );
+    for f in &v.folders {
+        print_usage_row(f);
+    }
+    if v.unattributed > 0 {
+        println!(
+            "  {}  {}",
+            size_cell(v.unattributed, 10),
+            "not in any folder: APFS metadata, snapshots, unreadable folders".dimmed()
+        );
+    }
+
+    if !v.system.is_empty() {
+        println!();
+        println!("{}", "Owned by macOS".bold());
+        for f in &v.system {
+            print_usage_row(f);
+        }
+    }
+}
+
+fn print_usage_row(f: &crate::fsutil::DirUsage) {
+    let mut tail = String::new();
+    if f.unreadable {
+        tail.push_str(&format!("  {}", lock_label(f.size).yellow()));
+    }
+    if let Some(note) = f.note {
+        tail.push_str(&format!("  {}", note.dimmed()));
+    }
+    println!("  {}  {}{tail}", size_cell(f.size, 10), f.path.bold());
 }
 
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {

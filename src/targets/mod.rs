@@ -45,6 +45,7 @@ const MARKER_KINDS: &[ProjectKind] = &[
 ];
 
 pub mod app_caches;
+pub mod applications;
 pub mod dev_tools;
 pub mod heavy;
 pub mod large_items;
@@ -71,6 +72,7 @@ pub fn all() -> Vec<Box<dyn Target + Send + Sync>> {
         Box::new(projects::Projects),
         Box::new(large_items::LargeItems),
         Box::new(vm_images::VmImages),
+        Box::new(applications::Applications),
         Box::new(heavy::Heavy),
         Box::new(leftovers::Leftovers),
     ]

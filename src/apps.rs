@@ -31,10 +31,16 @@ pub fn installed_apps() -> Vec<App> {
     if let Some(home) = dirs::home_dir() {
         roots.push(home.join("Applications"));
     }
+    apps_in(&roots)
+}
+
+/// Every `.app` under `roots`, looking a few folders deep for suites that
+/// group their apps (`/Applications/Adobe …/*.app`).
+pub fn apps_in(roots: &[PathBuf]) -> Vec<App> {
     let mut apps = Vec::new();
     let mut seen = HashSet::new();
     for root in roots {
-        collect_apps(&root, &mut apps, &mut seen, 0);
+        collect_apps(root, &mut apps, &mut seen, 0);
     }
     apps
 }
@@ -136,8 +142,7 @@ fn extract_png(icns: &[u8]) -> Option<&[u8]> {
 
 /// Standard base64, appended to `out` (avoids a crate for one small encode).
 fn base64_into(data: &[u8], out: &mut String) {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     out.reserve(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let n = ((chunk[0] as u32) << 16)

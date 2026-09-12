@@ -48,19 +48,31 @@ pub fn dir_size(path: &Path) -> u64 {
 /// files aren't over-reported, and dedups hardlinks by `(device, inode)` so a
 /// file linked twice in the tree is counted once. APFS clones are a different
 /// inode sharing the same blocks, and are counted once per clone.
+///
+/// The walk stays on the volume it starts on. Another disk mounted inside the
+/// tree is not part of this folder's weight, and a network share mounted in a
+/// home folder would otherwise stall the whole scan.
 pub fn dir_usage(path: &Path) -> Usage {
+    let root_dev = fs::symlink_metadata(path).map(|m| m.dev()).ok();
     // Per-file state stashed during the parallel walk: (on-disk bytes, dev, ino).
     let walk = WalkDirGeneric::<((), Option<(u64, u64, u64)>)>::new(path)
         .follow_links(false)
         // jwalk skips dotfiles unless told otherwise, which silently leaves out
         // `.git`, `.next`, a pnpm `node_modules/.pnpm` — often most of the bytes.
         .skip_hidden(false)
-        .process_read_dir(|_depth, _path, _state, children| {
+        .process_read_dir(move |_depth, _path, _state, children| {
             for child in children.iter_mut().flatten() {
-                if child.file_type().is_file() {
-                    if let Ok(m) = fs::symlink_metadata(child.path()) {
-                        child.client_state = Some((m.blocks() * 512, m.dev(), m.ino()));
-                    }
+                let file_type = child.file_type();
+                if !file_type.is_file() && !file_type.is_dir() {
+                    continue;
+                }
+                let Ok(m) = fs::symlink_metadata(child.path()) else {
+                    continue;
+                };
+                if file_type.is_file() {
+                    child.client_state = Some((m.blocks() * 512, m.dev(), m.ino()));
+                } else if root_dev.is_some_and(|dev| dev != m.dev()) {
+                    child.read_children_path = None;
                 }
             }
         });
@@ -249,7 +261,55 @@ pub struct DirUsage {
     pub size: u64,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub unreadable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<&'static str>,
 }
+
+/// Where the Data volume's bytes are, folder by folder from its root, set
+/// against what the filesystem says is in use. Whatever the folders don't add
+/// up to is kept as a remainder instead of quietly disappearing.
+#[derive(Debug, Serialize)]
+pub struct DataVolume {
+    pub used: u64,
+    pub folders: Vec<DirUsage>,
+    /// macOS-owned consumers inside those folders, named and explained.
+    pub system: Vec<DirUsage>,
+    /// APFS metadata, snapshot overhead, and anything in folders that refused
+    /// to be listed.
+    pub unattributed: u64,
+}
+
+/// The writable half of the startup disk. `/Applications`, `/Users` and the
+/// rest are firmlinked here from `/`, so this is the one place to measure them.
+const DATA_ROOT: &str = "/System/Volumes/Data";
+
+const SYSTEM_SPACE: &[(&str, &str)] = &[
+    (
+        "System/Library/AssetsV2",
+        "Apple-managed downloads: Siri, dictation, Apple Intelligence models",
+    ),
+    (
+        "private/var/folders",
+        "per-app temp files and caches, mostly cleared on restart",
+    ),
+    ("private/var/db", "system databases and unified logs"),
+    (
+        "private/var/vm",
+        "sleep image and swap, recreated as needed",
+    ),
+    (".Spotlight-V100", "Spotlight index"),
+    ("Library/Caches", "caches shared by every user"),
+    (
+        "Library/Developer",
+        "command line tools and simulator runtimes",
+    ),
+    ("Library/Updates", "downloaded macOS updates"),
+    (
+        "opt/homebrew",
+        "Homebrew packages — `brew cleanup` drops old versions",
+    ),
+    ("usr/local", "Intel Homebrew and hand-installed tools"),
+];
 
 /// One APFS volume inside the container: its role (`Data`, `Preboot`, `VM`…)
 /// and the bytes it actually consumes out of the shared pool.
@@ -311,6 +371,7 @@ pub struct Diagnosis {
     /// space pinned by snapshots. Usually small, and zero on a healthy disk.
     pub purgeable: Option<u64>,
     pub stalled_update: Option<StalledUpdate>,
+    pub data_volume: Option<DataVolume>,
 }
 
 /// The token `tmutil deletelocalsnapshots` accepts for a snapshot: the
@@ -440,6 +501,65 @@ fn stalled_update(container: Option<&Container>) -> Option<StalledUpdate> {
     })
 }
 
+/// Every entry at the root of the Data volume, sized. Nothing is picked by
+/// name, so a folder nobody thought to look for still shows up.
+fn folder_breakdown(root: &Path) -> Vec<DirUsage> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<DirUsage> = entries
+        .flatten()
+        .map(|entry| {
+            let usage = path_usage(&entry.path());
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let note = (name == "Users").then_some("home folders — `sweep scan` breaks these down");
+            DirUsage {
+                path: format!("/{name}"),
+                size: usage.bytes,
+                unreadable: usage.unreadable,
+                note,
+            }
+        })
+        .filter(|f| f.size > 0 || f.unreadable)
+        .collect();
+    folders.sort_by(|a, b| b.size.cmp(&a.size));
+    folders
+}
+
+fn named_system_space(root: &Path) -> Vec<DirUsage> {
+    let mut named: Vec<DirUsage> = SYSTEM_SPACE
+        .iter()
+        .filter_map(|(rel, note)| {
+            let path = root.join(rel);
+            if !path.is_dir() {
+                return None;
+            }
+            let usage = dir_usage(&path);
+            (usage.bytes > 0 || usage.unreadable).then(|| DirUsage {
+                path: format!("/{rel}"),
+                size: usage.bytes,
+                unreadable: usage.unreadable,
+                note: Some(note),
+            })
+        })
+        .collect();
+    named.sort_by(|a, b| b.size.cmp(&a.size));
+    named
+}
+
+fn data_volume() -> Option<DataVolume> {
+    let root = Path::new(DATA_ROOT);
+    let used = df(root)?.used;
+    let folders = folder_breakdown(root);
+    let attributed: u64 = folders.iter().map(|f| f.size).sum();
+    Some(DataVolume {
+        used,
+        unattributed: used.saturating_sub(attributed),
+        system: named_system_space(root),
+        folders,
+    })
+}
+
 /// Read-only snapshot of where space is going: the APFS container volume by
 /// volume, purgeable space, a stalled macOS update, local snapshots, and the
 /// heaviest sub-directories of `~/Library`.
@@ -472,6 +592,7 @@ pub fn diagnose() -> Diagnosis {
                         path: format!("~/Library/{sub}"),
                         size: usage.bytes,
                         unreadable: usage.unreadable,
+                        note: None,
                     });
                 }
             }
@@ -480,6 +601,7 @@ pub fn diagnose() -> Diagnosis {
     }
 
     Diagnosis {
+        data_volume: data_volume(),
         free_space: free_space_root(),
         local_snapshots: local_snapshots(),
         library_dirs,
@@ -564,6 +686,23 @@ pub(crate) mod tests {
         fs::write(dir.path().join(".DS_Store"), vec![0u8; 200_000]).unwrap();
 
         assert!(dir_size(dir.path()) >= 400_000);
+    }
+
+    #[test]
+    fn breakdown_lists_every_root_entry_it_can_weigh() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("Users/me")).unwrap();
+        fs::write(root.path().join("Users/me/big.bin"), vec![0u8; 300_000]).unwrap();
+        fs::create_dir(root.path().join("opt")).unwrap();
+        fs::write(root.path().join("opt/tool"), vec![0u8; 100_000]).unwrap();
+        fs::create_dir(root.path().join("mnt")).unwrap();
+
+        let folders = folder_breakdown(root.path());
+
+        // Heaviest first, nothing picked by name, empty folders left out.
+        let paths: Vec<&str> = folders.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["/Users", "/opt"]);
+        assert!(folders[0].note.is_some());
     }
 
     #[test]
