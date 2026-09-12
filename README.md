@@ -140,6 +140,14 @@ reached through "Choose items…", so a stray Enter can't delete them.
 Nothing is hard-coded to a particular machine: detectors resolve known paths
 relative to your home and discover the rest by scanning.
 
+Detectors overlap — `~/Library/Caches` holds the Chrome cache `privacy` lists,
+a heavy folder can hold an app cache — so every byte is counted once. A path
+belongs to the finding that names it most precisely: the folder around it
+reports its size without it, and emptying that folder leaves the path in place,
+so unticking "chrome cache" keeps the Chrome cache even when `~/Library/Caches`
+is cleaned. Cleanup commands overlap through the folders they actually clear:
+the npm cache is weighed as `_cacache`, not the `_npx` installs next to it.
+
 `heavy` is the one that answers "my disk is full and I can't see why". Every
 other detector recognises a name it was taught; this one only follows bytes, so
 a one-off `.migration-staging` folder, a tool's browser recordings, or a 4 GB

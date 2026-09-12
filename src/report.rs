@@ -37,6 +37,10 @@ pub struct Finding {
     /// How to weigh a command's target again once it has run.
     #[serde(skip)]
     pub remeasure: Option<Remeasure>,
+    /// Paths inside this one that another, more specific finding reports.
+    /// They're left out of `size` and left in place when this is emptied.
+    #[serde(skip)]
+    pub keep: Vec<PathBuf>,
 }
 
 /// A way to measure what a cleanup command left behind, so the result reports
@@ -69,6 +73,7 @@ impl Finding {
             stale: true,
             unreadable: false,
             remeasure: None,
+            keep: Vec::new(),
         }
     }
 
@@ -95,6 +100,18 @@ impl Finding {
     pub fn remeasure(mut self, remeasure: Remeasure) -> Self {
         self.remeasure = Some(remeasure);
         self
+    }
+
+    /// Where this finding's bytes are on disk: its path, or for a command the
+    /// folders it clears. A label like "npm cache" is not a place.
+    fn places(&self) -> Vec<PathBuf> {
+        if self.path.is_absolute() {
+            return vec![self.path.clone()];
+        }
+        match &self.remeasure {
+            Some(Remeasure::Dirs(dirs)) => dirs.clone(),
+            _ => Vec::new(),
+        }
     }
 
     /// Picked without asking: safe, idle, and actually readable. Something we
@@ -157,6 +174,75 @@ pub struct Applied {
     pub error: Option<String>,
 }
 
+/// Make every byte count once across all reports. Targets overlap by design —
+/// `~/Library/Caches` holds the Chrome cache `privacy` names, a heavy folder can
+/// hold an app cache — so each nested path belongs to the finding that names it
+/// most precisely. The finding around it loses those bytes from its size and,
+/// when emptied, leaves the path in place, so unticking the specific item
+/// really keeps it. A path reported twice keeps its first finding.
+pub fn dedupe(reports: &mut [Report]) {
+    let places: Vec<(usize, usize, Vec<PathBuf>, u64)> = reports
+        .iter()
+        .enumerate()
+        .flat_map(|(r, report)| {
+            report
+                .findings
+                .iter()
+                .enumerate()
+                .map(move |(f, finding)| (r, f, finding.places(), finding.size))
+        })
+        .collect();
+
+    /// A finding, by report and position, and the nested paths it gives up.
+    type Owned = (usize, usize, Vec<(PathBuf, u64)>);
+    let mut duplicates = Vec::new();
+    let mut owned: Vec<Owned> = Vec::new();
+    for (i, (r, f, outer, _)) in places.iter().enumerate() {
+        let mut inside: Vec<(PathBuf, u64)> = Vec::new();
+        for (j, (_, _, inner, size)) in places.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            for path in inner {
+                if outer.contains(path) {
+                    if j > i && inner.len() == 1 && outer.len() == 1 {
+                        duplicates.push((places[j].0, places[j].1));
+                    }
+                } else if outer.iter().any(|o| path.starts_with(o))
+                    && !inside.iter().any(|(p, _)| p == path)
+                {
+                    inside.push((path.clone(), *size));
+                }
+            }
+        }
+        // Only the outermost of nested inner paths: a folder already left out
+        // takes everything under it along.
+        let tops: Vec<(PathBuf, u64)> = inside
+            .iter()
+            .filter(|(p, _)| !inside.iter().any(|(q, _)| p != q && p.starts_with(q)))
+            .cloned()
+            .collect();
+        if !tops.is_empty() {
+            owned.push((*r, *f, tops));
+        }
+    }
+
+    for (r, f, tops) in owned {
+        let finding = &mut reports[r].findings[f];
+        let bytes: u64 = tops.iter().map(|(_, size)| size).sum();
+        finding.size = finding.size.saturating_sub(bytes);
+        if matches!(finding.action, CleanAction::EmptyDir) {
+            finding.keep.extend(tops.into_iter().map(|(p, _)| p));
+        }
+    }
+
+    duplicates.sort_unstable();
+    duplicates.dedup();
+    for (r, f) in duplicates.into_iter().rev() {
+        reports[r].findings.remove(f);
+    }
+}
+
 /// What applying a finding would do, worked out without touching anything.
 #[derive(Debug)]
 pub struct Plan {
@@ -195,6 +281,9 @@ pub fn plan(finding: &Finding, purge: bool, in_use: &InUse) -> Plan {
                 .flatten()
                 .filter_map(|entry| {
                     let path = entry.path();
+                    if finding.keep.iter().any(|k| k.starts_with(&path)) {
+                        return None;
+                    }
                     let reason = in_use.why(&path)?;
                     Some(fsutil::Skipped {
                         size: fsutil::path_size(&path),
@@ -256,11 +345,11 @@ pub fn apply(finding: &Finding, purge: bool, in_use: &InUse) -> Applied {
                 },
             }
         }
-        CleanAction::EmptyDir => match fsutil::empty_dir(&finding.path, in_use) {
+        CleanAction::EmptyDir => match fsutil::empty_dir(&finding.path, in_use, &finding.keep) {
             Ok(emptied) => Applied {
                 bytes: finding
                     .size
-                    .saturating_sub(fsutil::path_size(&finding.path)),
+                    .saturating_sub(fsutil::size_except(&finding.path, &finding.keep)),
                 skipped: emptied.skipped,
                 failed: emptied.failed,
                 ..Applied::default()
@@ -365,6 +454,77 @@ mod tests {
         let applied = apply(&finding, true, &InUse::default());
         assert_eq!(applied.bytes, 0);
         assert!(applied.trashed.is_none() && applied.error.is_none());
+    }
+
+    #[test]
+    fn nested_findings_count_once_and_belong_to_the_precise_one() {
+        let caches = PathBuf::from("/Users/me/Library/Caches");
+        let google = caches.join("Google");
+        let chrome = google.join("Chrome");
+        let mut reports = vec![
+            Report {
+                target: "system-caches".into(),
+                findings: vec![Finding::dir(caches.clone(), 1_000, CleanAction::EmptyDir)],
+                unreadable: Vec::new(),
+            },
+            Report {
+                target: "privacy".into(),
+                findings: vec![
+                    Finding::dir(chrome.clone(), 300, CleanAction::EmptyDir),
+                    // Inside Chrome's own finding: must not be taken off twice.
+                    Finding::dir(chrome.join("Code Cache"), 100, CleanAction::EmptyDir),
+                ],
+                unreadable: Vec::new(),
+            },
+            Report {
+                target: "app-caches".into(),
+                // The very same folder again.
+                findings: vec![Finding::dir(
+                    chrome.join("Code Cache"),
+                    100,
+                    CleanAction::RemovePath,
+                )],
+                unreadable: Vec::new(),
+            },
+        ];
+
+        dedupe(&mut reports);
+
+        let caches_finding = &reports[0].findings[0];
+        assert_eq!(caches_finding.size, 700);
+        assert_eq!(caches_finding.keep, vec![chrome.clone()]);
+        assert_eq!(reports[1].findings[0].size, 200);
+        assert_eq!(reports[1].findings[0].keep, vec![chrome.join("Code Cache")]);
+        assert!(reports[2].findings.is_empty(), "the duplicate goes");
+        let total: u64 = reports.iter().map(|r| r.total_size()).sum();
+        assert_eq!(total, 1_000, "every byte once");
+    }
+
+    #[test]
+    fn a_command_overlaps_through_the_folders_it_clears() {
+        let npm = PathBuf::from("/Users/me/.npm");
+        let mut reports = vec![Report {
+            target: "t".into(),
+            findings: vec![
+                Finding::dir(
+                    PathBuf::from("npm cache"),
+                    900,
+                    CleanAction::Command(words(&["npm", "cache", "clean"])),
+                )
+                .remeasure(Remeasure::Dirs(vec![npm.clone()])),
+                Finding::dir(
+                    npm.join("_npx/abc/node_modules"),
+                    400,
+                    CleanAction::RemovePath,
+                ),
+            ],
+            unreadable: Vec::new(),
+        }];
+
+        dedupe(&mut reports);
+
+        assert_eq!(reports[0].findings[0].size, 500);
+        assert_eq!(reports[0].findings[1].size, 400);
     }
 
     #[test]

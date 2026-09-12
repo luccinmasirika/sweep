@@ -450,7 +450,11 @@ pub struct Emptied {
 /// use — open by a process, belonging to a running app or a system service —
 /// is left in place, as are protected toolchain paths. An entry that refuses to
 /// delete doesn't stop the rest; it's reported instead of passed off as gone.
-pub fn empty_dir(path: &Path, in_use: &crate::inuse::InUse) -> Result<Emptied> {
+///
+/// `keep` lists paths inside `path` that belong to a more specific finding:
+/// they stay, and so do the folders leading to them, so unticking "chrome
+/// cache" isn't overruled by emptying the `Caches` folder around it.
+pub fn empty_dir(path: &Path, in_use: &crate::inuse::InUse, keep: &[PathBuf]) -> Result<Emptied> {
     let mut emptied = Emptied::default();
     if !path.is_dir() {
         return Ok(emptied);
@@ -459,7 +463,14 @@ pub fn empty_dir(path: &Path, in_use: &crate::inuse::InUse) -> Result<Emptied> {
     for entry in fs::read_dir(path)? {
         let Ok(entry) = entry else { continue };
         let p = entry.path();
-        if is_protected(&p, roots) {
+        if is_protected(&p, roots) || keep.contains(&p) {
+            continue;
+        }
+        if keep.iter().any(|k| k.starts_with(&p)) {
+            if let Ok(inner) = empty_dir(&p, in_use, keep) {
+                emptied.skipped.extend(inner.skipped);
+                emptied.failed.extend(inner.failed);
+            }
             continue;
         }
         if let Some(reason) = in_use.why(&p) {
@@ -482,6 +493,22 @@ pub fn empty_dir(path: &Path, in_use: &crate::inuse::InUse) -> Result<Emptied> {
         }
     }
     Ok(emptied)
+}
+
+/// On-disk size of `path` leaving out `keep` and everything under it.
+pub fn size_except(path: &Path, keep: &[PathBuf]) -> u64 {
+    if keep.iter().any(|k| k == path) {
+        return 0;
+    }
+    if !keep.iter().any(|k| k.starts_with(path)) {
+        return path_size(path);
+    }
+    fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| size_except(&entry.path(), keep))
+        .sum()
 }
 
 /// Bytes held by files that have been deleted but are still open somewhere.
@@ -963,7 +990,7 @@ pub(crate) mod tests {
         // On-disk size: at least the bytes written, rounded up to whole blocks.
         assert!(dir_size(dir.path()) >= 400_000);
 
-        let emptied = empty_dir(dir.path(), &crate::inuse::InUse::default()).unwrap();
+        let emptied = empty_dir(dir.path(), &crate::inuse::InUse::default(), &[]).unwrap();
         assert!(emptied.skipped.is_empty() && emptied.failed.is_empty());
         assert_eq!(dir_size(dir.path()), 0);
         assert!(dir.path().is_dir());
@@ -1170,7 +1197,7 @@ pub(crate) mod tests {
         // A read-only folder: its contents can't be unlinked.
         fs::set_permissions(&stuck, fs::Permissions::from_mode(0o555)).unwrap();
 
-        let emptied = empty_dir(dir.path(), &crate::inuse::InUse::default()).unwrap();
+        let emptied = empty_dir(dir.path(), &crate::inuse::InUse::default(), &[]).unwrap();
         fs::set_permissions(&stuck, fs::Permissions::from_mode(0o755)).unwrap();
 
         if stuck.join("inside.bin").exists() {
@@ -1187,6 +1214,31 @@ pub(crate) mod tests {
         let out = "p512\nf4\ns314572800\nn/tmp/held.bin\np600\nf9\ns1024\nn/tmp/log\n";
         assert_eq!(parse_held(out), 314_573_824);
         assert_eq!(parse_held(""), 0);
+    }
+
+    #[test]
+    fn emptying_leaves_what_another_finding_owns() {
+        let caches = tempfile::tempdir().unwrap();
+        let chrome = caches.path().join("Google/Chrome");
+        fs::create_dir_all(&chrome).unwrap();
+        fs::write(chrome.join("data_0"), vec![0u8; 200_000]).unwrap();
+        fs::write(caches.path().join("Google/other"), vec![0u8; 100_000]).unwrap();
+        fs::create_dir(caches.path().join("Homebrew")).unwrap();
+        fs::write(caches.path().join("Homebrew/bottle"), vec![0u8; 100_000]).unwrap();
+        let keep = vec![chrome.clone()];
+
+        let all = dir_size(caches.path());
+        let own = size_except(caches.path(), &keep);
+        assert!(own >= 200_000 && own < all, "{own} of {all}");
+
+        empty_dir(caches.path(), &crate::inuse::InUse::default(), &keep).unwrap();
+        assert!(
+            chrome.join("data_0").exists(),
+            "the Chrome finding owns this"
+        );
+        assert!(!caches.path().join("Google/other").exists());
+        assert!(!caches.path().join("Homebrew").exists());
+        assert_eq!(size_except(caches.path(), &keep), 0);
     }
 
     #[test]

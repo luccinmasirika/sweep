@@ -137,6 +137,7 @@ pub fn collect(cfg: &Config, only: &[String]) -> Result<Vec<Report>> {
         spinner.finish_and_clear();
         reports.push(report);
     }
+    crate::report::dedupe(&mut reports);
     Ok(reports)
 }
 
@@ -489,7 +490,7 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
             // Nothing runs out of a Trash folder, so there's nothing in use to
             // look for.
             for trash in &trashes {
-                match fsutil::empty_dir(trash, &InUse::default()) {
+                match fsutil::empty_dir(trash, &InUse::default(), &[]) {
                     Ok(emptied) => {
                         journal::record("emptied", trash, 0, Some("Trash"));
                         ui::print_failed(&emptied.failed);

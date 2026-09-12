@@ -43,9 +43,12 @@ impl Target for DevTools {
 
         if exec::command_exists("npm") {
             f.push(
+                // `npm cache clean` clears the package cache, `_cacache`; the
+                // `_npx` installs next to it stay, and `projects` reports those.
                 dirs_finding(
                     "npm cache",
                     store_path(&["npm", "config", "get", "cache"])
+                        .map(|cache| cache.join("_cacache"))
                         .into_iter()
                         .collect(),
                     &["npm", "cache", "clean", "--force"],
