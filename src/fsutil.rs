@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -44,18 +44,17 @@ pub fn dir_size(path: &Path) -> u64 {
 }
 
 /// Bytes actually occupied on disk by every regular file under `path`, walked
-/// in parallel and not following symlinks. Counts real `st_blocks`, so sparse
-/// files aren't over-reported, and dedups hardlinks by `(device, inode)` so a
-/// file linked twice in the tree is counted once. APFS clones are a different
-/// inode sharing the same blocks, and are counted once per clone.
+/// in parallel and not following symlinks. Counts real allocated blocks, so
+/// sparse files aren't over-reported, and counts shared blocks once: a file
+/// hardlinked twice, or copied as an APFS clone, weighs what it costs on disk
+/// rather than once per name.
 ///
 /// The walk stays on the volume it starts on. Another disk mounted inside the
 /// tree is not part of this folder's weight, and a network share mounted in a
 /// home folder would otherwise stall the whole scan.
 pub fn dir_usage(path: &Path) -> Usage {
     let root_dev = fs::symlink_metadata(path).map(|m| m.dev()).ok();
-    // Per-file state stashed during the parallel walk: (on-disk bytes, dev, ino).
-    let walk = WalkDirGeneric::<((), Option<(u64, u64, u64)>)>::new(path)
+    let walk = WalkDirGeneric::<((), Option<FileBlocks>)>::new(path)
         .follow_links(false)
         // jwalk skips dotfiles unless told otherwise, which silently leaves out
         // `.git`, `.next`, a pnpm `node_modules/.pnpm` — often most of the bytes.
@@ -63,21 +62,24 @@ pub fn dir_usage(path: &Path) -> Usage {
         .process_read_dir(move |_depth, _path, _state, children| {
             for child in children.iter_mut().flatten() {
                 let file_type = child.file_type();
-                if !file_type.is_file() && !file_type.is_dir() {
-                    continue;
-                }
-                let Ok(m) = fs::symlink_metadata(child.path()) else {
-                    continue;
-                };
                 if file_type.is_file() {
-                    child.client_state = Some((m.blocks() * 512, m.dev(), m.ino()));
-                } else if root_dev.is_some_and(|dev| dev != m.dev()) {
+                    child.client_state = file_blocks(&child.path());
+                } else if file_type.is_dir()
+                    && root_dev.is_some_and(|dev| {
+                        fs::symlink_metadata(child.path()).is_ok_and(|m| m.dev() != dev)
+                    })
+                {
                     child.read_children_path = None;
                 }
             }
         });
 
-    let mut seen = HashSet::new();
+    let mut inodes = HashSet::new();
+    // Blocks a clone family shares, counted once per family. APFS gives an
+    // edited clone a new id, so its shared blocks can no longer be matched to
+    // the source and are counted again — never less than the truth, at worst
+    // what `du` would say.
+    let mut shared: HashMap<(u64, u64), u64> = HashMap::new();
     let mut usage = Usage::default();
     for entry in walk {
         let entry = match entry {
@@ -92,13 +94,160 @@ pub fn dir_usage(path: &Path) -> Usage {
         if let Some(e) = &entry.read_children_error {
             usage.unreadable |= is_denied(e);
         }
-        if let Some((bytes, dev, ino)) = entry.client_state {
-            if seen.insert((dev, ino)) {
-                usage.bytes += bytes;
+        let Some(file) = entry.client_state else {
+            continue;
+        };
+        if !inodes.insert((file.dev, file.ino)) {
+            continue;
+        }
+        match file.clone {
+            Some((id, bytes)) => {
+                usage.bytes += file.bytes - bytes;
+                let family = shared.entry((file.dev, id)).or_default();
+                *family = (*family).max(bytes);
             }
+            None => usage.bytes += file.bytes,
         }
     }
+    usage.bytes += shared.values().sum::<u64>();
     usage
+}
+
+/// What a single file occupies, and how much of that it may share.
+#[derive(Debug, Default, Clone, Copy)]
+struct FileBlocks {
+    dev: u64,
+    ino: u64,
+    /// Allocated on disk, shared blocks included.
+    bytes: u64,
+    /// For an APFS clone: its clone id — the same for every untouched copy —
+    /// and the blocks it shares with other files.
+    clone: Option<(u64, u64)>,
+}
+
+/// `getattrlist` instead of `lstat`: the same device, inode and allocated size,
+/// plus whether APFS says the file may share blocks. Only for the few that do
+/// is the private size asked for — working it out means walking the file's
+/// extents, and doing that for every file made a scan half again as slow.
+#[cfg(target_os = "macos")]
+fn file_blocks(path: &Path) -> Option<FileBlocks> {
+    use std::os::unix::ffi::OsStrExt;
+
+    /// `sys/stat.h`: the file may share blocks with another file.
+    const EF_MAY_SHARE_BLOCKS: u64 = 0x1;
+
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut buf = [0u8; 128];
+    let Some(mut r) = get_attrs(
+        &c_path,
+        libc::ATTR_CMN_DEVID | libc::ATTR_CMN_FILEID,
+        libc::ATTR_FILE_ALLOCSIZE,
+        libc::ATTR_CMNEXT_CLONEID | libc::ATTR_CMNEXT_EXT_FLAGS,
+        &mut buf,
+    ) else {
+        return lstat_blocks(path);
+    };
+    // Packed in request order — common, file, then extended common — so the
+    // fields read back in the order of their bits within each group.
+    let dev = r.u32()? as u64;
+    let ino = r.u64()?;
+    let bytes = r.u64()?;
+    let clone_id = r.u64()?;
+    let flags = r.u64()?;
+
+    let mut clone = None;
+    if flags & EF_MAY_SHARE_BLOCKS != 0 {
+        let mut buf = [0u8; 64];
+        let private = get_attrs(&c_path, 0, 0, libc::ATTR_CMNEXT_PRIVATESIZE, &mut buf)
+            .and_then(|mut r| r.u64());
+        if let Some(private) = private.filter(|p| *p < bytes) {
+            clone = Some((clone_id, bytes - private));
+        }
+    }
+    Some(FileBlocks {
+        dev,
+        ino,
+        bytes,
+        clone,
+    })
+}
+
+/// One `getattrlist` call, with a reader positioned on the first requested
+/// attribute. `None` when the call fails.
+#[cfg(target_os = "macos")]
+fn get_attrs<'a>(
+    path: &std::ffi::CStr,
+    common: libc::attrgroup_t,
+    file: libc::attrgroup_t,
+    extended: libc::attrgroup_t,
+    buf: &'a mut [u8],
+) -> Option<AttrReader<'a>> {
+    let mut request = libc::attrlist {
+        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr: libc::ATTR_CMN_RETURNED_ATTRS | common,
+        volattr: 0,
+        dirattr: 0,
+        fileattr: file,
+        forkattr: extended,
+    };
+    // SAFETY: `request` and `buf` outlive the call, and the size passed is the
+    // buffer's real length, so the kernel never writes past it.
+    let rc = unsafe {
+        libc::getattrlist(
+            path.as_ptr(),
+            (&mut request as *mut libc::attrlist).cast(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            libc::FSOPT_NOFOLLOW | libc::FSOPT_PACK_INVAL_ATTRS | libc::FSOPT_ATTR_CMN_EXTENDED,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    // The buffer opens with its length and the set of attributes returned.
+    Some(AttrReader {
+        buf,
+        at: 4 + std::mem::size_of::<libc::attribute_set_t>(),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn file_blocks(path: &Path) -> Option<FileBlocks> {
+    lstat_blocks(path)
+}
+
+fn lstat_blocks(path: &Path) -> Option<FileBlocks> {
+    let m = fs::symlink_metadata(path).ok()?;
+    Some(FileBlocks {
+        dev: m.dev(),
+        ino: m.ino(),
+        bytes: m.blocks() * 512,
+        clone: None,
+    })
+}
+
+#[cfg(target_os = "macos")]
+struct AttrReader<'a> {
+    buf: &'a [u8],
+    at: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl AttrReader<'_> {
+    fn take<const N: usize>(&mut self) -> Option<[u8; N]> {
+        let bytes = self.buf.get(self.at..self.at + N)?.try_into().ok()?;
+        self.at = (self.at + N).next_multiple_of(4);
+        Some(bytes)
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        self.take().map(u32::from_ne_bytes)
+    }
+
+    fn u64(&mut self) -> Option<u64> {
+        self.take().map(u64::from_ne_bytes)
+    }
 }
 
 fn is_denied(e: &jwalk::Error) -> bool {
@@ -367,8 +516,11 @@ pub struct Diagnosis {
     pub local_snapshots: Vec<String>,
     pub library_dirs: Vec<DirUsage>,
     pub container: Option<Container>,
-    /// Blocks APFS charges the Data volume that `df` no longer counts as used:
-    /// space pinned by snapshots. Usually small, and zero on a healthy disk.
+    /// Free space as the Finder counts it: what's free now plus what macOS
+    /// will purge on demand.
+    pub finder_free: Option<u64>,
+    /// Caches and snapshots macOS deletes by itself when space runs low. It
+    /// looks used to `df` and free to the Finder, which is why they disagree.
     pub purgeable: Option<u64>,
     pub stalled_update: Option<StalledUpdate>,
     pub data_volume: Option<DataVolume>,
@@ -501,6 +653,42 @@ fn stalled_update(container: Option<&Container>) -> Option<StalledUpdate> {
     })
 }
 
+/// The two free-space figures macOS keeps for the startup volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Capacity {
+    /// Free right now.
+    available: u64,
+    /// Free once macOS purges what it's allowed to — the number the Finder
+    /// and System Settings show.
+    important: u64,
+}
+
+/// Only Foundation exposes the purgeable-inclusive figure, so it is read
+/// through `osascript`'s Objective-C bridge rather than linking the framework.
+fn finder_capacity() -> Option<Capacity> {
+    const SCRIPT: &str = r#"ObjC.import("Foundation");
+var keys = ["NSURLVolumeAvailableCapacityKey", "NSURLVolumeAvailableCapacityForImportantUsageKey"];
+var values = $.NSURL.fileURLWithPath("/").resourceValuesForKeysError(keys, null);
+keys.map(function (k) { return ObjC.unwrap(values.objectForKey(k)); }).join(" ")"#;
+    let out = crate::exec::capture(&[
+        "osascript".into(),
+        "-l".into(),
+        "JavaScript".into(),
+        "-e".into(),
+        SCRIPT.into(),
+    ])
+    .ok()?;
+    parse_capacity(&out)
+}
+
+fn parse_capacity(out: &str) -> Option<Capacity> {
+    let mut numbers = out.split_whitespace().map(str::parse::<u64>);
+    Some(Capacity {
+        available: numbers.next()?.ok()?,
+        important: numbers.next()?.ok()?,
+    })
+}
+
 /// Every entry at the root of the Data volume, sized. Nothing is picked by
 /// name, so a folder nobody thought to look for still shows up.
 fn folder_breakdown(root: &Path) -> Vec<DirUsage> {
@@ -566,13 +754,7 @@ fn data_volume() -> Option<DataVolume> {
 pub fn diagnose() -> Diagnosis {
     let container = apfs_container();
 
-    // What APFS charges the Data volume, minus what `df` says is in use there:
-    // blocks held by snapshots and caches that macOS calls "purgeable".
-    let purgeable = container
-        .as_ref()
-        .and_then(|c| c.volume("Data"))
-        .zip(df(Path::new("/System/Volumes/Data")))
-        .map(|(vol, df)| vol.consumed.saturating_sub(df.used));
+    let capacity = finder_capacity();
 
     let mut library_dirs = Vec::new();
     if let Some(lib) = dirs::home_dir().map(|h| h.join("Library")) {
@@ -606,7 +788,8 @@ pub fn diagnose() -> Diagnosis {
         local_snapshots: local_snapshots(),
         library_dirs,
         stalled_update: stalled_update(container.as_ref()),
-        purgeable,
+        finder_free: capacity.map(|c| c.important),
+        purgeable: capacity.map(|c| c.important.saturating_sub(c.available)),
         container,
     }
 }
@@ -703,6 +886,78 @@ pub(crate) mod tests {
         let paths: Vec<&str> = folders.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["/Users", "/opt"]);
         assert!(folders[0].note.is_some());
+    }
+
+    #[test]
+    fn reads_the_same_file_facts_as_lstat() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.bin");
+        fs::write(&file, vec![1u8; 300_000]).unwrap();
+        let m = fs::symlink_metadata(&file).unwrap();
+
+        let f = file_blocks(&file).unwrap();
+        assert_eq!(
+            (f.dev, f.ino, f.bytes),
+            (m.dev(), m.ino(), m.blocks() * 512)
+        );
+        assert!(f.clone.is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    fn clone_file(from: &Path, to: &Path) -> bool {
+        use std::os::unix::ffi::OsStrExt;
+        let from = std::ffi::CString::new(from.as_os_str().as_bytes()).unwrap();
+        let to = std::ffi::CString::new(to.as_os_str().as_bytes()).unwrap();
+        // SAFETY: both paths are valid NUL-terminated strings for the call.
+        unsafe { libc::clonefile(from.as_ptr(), to.as_ptr(), 0) == 0 }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_apfs_clone_is_counted_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("original.bin");
+        fs::write(&original, vec![7u8; 1_000_000]).unwrap();
+        let single = dir_size(dir.path());
+        // Only APFS can clone; elsewhere there is nothing to test.
+        if !clone_file(&original, &dir.path().join("copy.bin")) {
+            return;
+        }
+
+        assert_eq!(dir_size(dir.path()), single);
+
+        // Rewrite part of the copy. APFS splits it from the family and the
+        // shared part can't be matched any more: the total may rise to what
+        // `du` says, but never past it and never below the bytes really used.
+        use std::io::{Seek, SeekFrom, Write};
+        let mut copy = fs::OpenOptions::new()
+            .write(true)
+            .open(dir.path().join("copy.bin"))
+            .unwrap();
+        copy.seek(SeekFrom::Start(0)).unwrap();
+        copy.write_all(&vec![9u8; 200_000]).unwrap();
+        copy.sync_all().unwrap();
+        drop(copy);
+
+        let edited = dir_size(dir.path());
+        assert!(
+            edited > single && edited <= single * 2,
+            "{single} → {edited}"
+        );
+    }
+
+    #[test]
+    fn parses_both_free_space_figures() {
+        assert_eq!(
+            parse_capacity("16171790336 17254903872\n"),
+            Some(Capacity {
+                available: 16_171_790_336,
+                important: 17_254_903_872,
+            })
+        );
+        // A key Foundation didn't return comes back as "undefined".
+        assert_eq!(parse_capacity("16171790336 undefined"), None);
+        assert_eq!(parse_capacity(""), None);
     }
 
     #[test]

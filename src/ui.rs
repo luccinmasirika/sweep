@@ -391,13 +391,11 @@ pub fn print_doctor(d: &crate::fsutil::Diagnosis) {
         println!("  free on /     {}", human(free).bold());
     }
 
-    if let Some(purgeable) = d.purgeable.filter(|p| *p > 0) {
-        println!();
-        println!("{}", "Purgeable".bold());
-        println!("  {}", size_cell(purgeable, 10));
+    if let (Some(finder), Some(purgeable)) = (d.finder_free, d.purgeable) {
         println!(
-            "  {}",
-            "pinned by snapshots — why the Finder and `df` disagree".dimmed()
+            "  Finder free   {}  {}",
+            human(finder).bold(),
+            format!("includes {} macOS purges on demand", human(purgeable)).dimmed()
         );
     }
 

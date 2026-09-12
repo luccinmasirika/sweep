@@ -956,6 +956,7 @@ dependencies = [
  "humansize",
  "indicatif",
  "jwalk",
+ "libc",
  "owo-colors",
  "predicates",
  "serde",
