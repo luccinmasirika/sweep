@@ -52,6 +52,9 @@ pub fn dir_usage(path: &Path) -> Usage {
     // Per-file state stashed during the parallel walk: (on-disk bytes, dev, ino).
     let walk = WalkDirGeneric::<((), Option<(u64, u64, u64)>)>::new(path)
         .follow_links(false)
+        // jwalk skips dotfiles unless told otherwise, which silently leaves out
+        // `.git`, `.next`, a pnpm `node_modules/.pnpm` — often most of the bytes.
+        .skip_hidden(false)
         .process_read_dir(|_depth, _path, _state, children| {
             for child in children.iter_mut().flatten() {
                 if child.file_type().is_file() {
@@ -551,6 +554,16 @@ pub(crate) mod tests {
             }
         );
         assert!(!dir_usage(&dir.path().join("seen.bin")).unreadable);
+    }
+
+    #[test]
+    fn hidden_files_are_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".next")).unwrap();
+        fs::write(dir.path().join(".next/chunk.js"), vec![0u8; 200_000]).unwrap();
+        fs::write(dir.path().join(".DS_Store"), vec![0u8; 200_000]).unwrap();
+
+        assert!(dir_size(dir.path()) >= 400_000);
     }
 
     #[test]
