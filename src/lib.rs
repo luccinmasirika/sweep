@@ -6,7 +6,6 @@ pub mod dupes;
 pub mod exec;
 pub mod explore;
 pub mod fsutil;
-pub mod gui_api;
 pub mod maintenance;
 pub mod report;
 pub mod schedule;

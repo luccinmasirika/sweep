@@ -56,16 +56,6 @@ pub fn run(fix: bool) -> Result<u32> {
     Ok(failures)
 }
 
-/// Run the named maintenance tasks non-interactively, returning the failure
-/// count. Unknown labels are ignored. Used by the GUI API.
-pub(crate) fn run_named(labels: &[String]) -> u32 {
-    let chosen: Vec<&Task> = TASKS
-        .iter()
-        .filter(|t| labels.iter().any(|l| l == t.label))
-        .collect();
-    run_tasks(&chosen)
-}
-
 fn run_tasks(chosen: &[&Task]) -> u32 {
     let mut failures = 0;
     for task in chosen {
