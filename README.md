@@ -58,6 +58,11 @@ mistake is undoable with Finder's "Put Back", or pass `--purge` to delete
 immediately. Pure caches are always deleted outright. `--yes` only touches
 safe, idle items — never personal files or projects that still look active.
 
+Items go to the Trash through `NSFileManager`, not by scripting the Finder:
+no Automation permission to grant, no trash sound per item, and it works from
+a scheduled run where no one is there to answer a prompt. "Put Back" still
+works.
+
 Moving something to the Trash frees nothing, so at the end of an interactive
 run sweep offers to empty **exactly what that run moved there** — found again
 by inode, since the Finder renames items whose name is already taken. Whatever

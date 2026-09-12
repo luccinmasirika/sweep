@@ -312,11 +312,31 @@ pub fn remove_path(path: &Path, purge: bool) -> Result<Option<TrashId>> {
         hard_remove(path, &meta)?;
         return Ok(None);
     }
-    trash::delete(path).with_context(|| format!("moving {} to Trash", path.display()))?;
+    trash_context()
+        .delete(path)
+        .with_context(|| format!("moving {} to Trash", path.display()))?;
     Ok(Some(TrashId {
         dev: meta.dev(),
         ino: meta.ino(),
     }))
+}
+
+/// Moves to the Trash through `NSFileManager` rather than the `trash` crate's
+/// default of scripting the Finder. Scripting the Finder needs Automation
+/// permission, which a scheduled run has no one to grant, and plays the trash
+/// sound for every item. Both methods keep the inode and record "Put Back" on
+/// current macOS.
+#[cfg(target_os = "macos")]
+fn trash_context() -> trash::TrashContext {
+    use trash::macos::{DeleteMethod, TrashContextExtMacos};
+    let mut ctx = trash::TrashContext::default();
+    ctx.set_delete_method(DeleteMethod::NsFileManager);
+    ctx
+}
+
+#[cfg(not(target_os = "macos"))]
+fn trash_context() -> trash::TrashContext {
+    trash::TrashContext::default()
 }
 
 /// Something moved to the Trash, recognised by inode. The Finder renames an

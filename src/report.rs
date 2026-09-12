@@ -235,6 +235,10 @@ pub fn apply(finding: &Finding, purge: bool, in_use: &InUse) -> Applied {
                     ..Applied::default()
                 };
             }
+            // Gone since the scan — another run, or the user: nothing was freed here.
+            if std::fs::symlink_metadata(&finding.path).is_err() {
+                return Applied::default();
+            }
             let result = fsutil::remove_path(&finding.path, purge);
             // A delete that fails halfway still removed something.
             let left = fsutil::path_size(&finding.path);
@@ -348,6 +352,19 @@ mod tests {
         let applied = apply(&finding, false, &in_use);
         assert_eq!(applied.skipped.len(), 1);
         assert_eq!(applied.skipped[0].path, planned.keeps[0].path);
+    }
+
+    #[test]
+    fn something_already_gone_is_not_counted_as_freed() {
+        let dir = tempfile::tempdir().unwrap();
+        let finding = Finding::dir(
+            dir.path().join("vanished/node_modules"),
+            3_000_000,
+            CleanAction::RemovePath,
+        );
+        let applied = apply(&finding, true, &InUse::default());
+        assert_eq!(applied.bytes, 0);
+        assert!(applied.trashed.is_none() && applied.error.is_none());
     }
 
     #[test]
