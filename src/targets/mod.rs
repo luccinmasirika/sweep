@@ -97,7 +97,9 @@ fn find_dirs(
         if !root.is_dir() {
             continue;
         }
-        let mut walker = WalkDir::new(root).into_iter();
+        // Stay on the root's volume: a network share mounted under it could
+        // hang the walk, and its contents aren't this disk's to clean.
+        let mut walker = WalkDir::new(root).same_file_system(true).into_iter();
         while let Some(entry) = walker.next() {
             let entry = match entry {
                 Ok(e) => e,

@@ -25,12 +25,23 @@ impl Target for DevTools {
         let f = &mut report.findings;
 
         if exec::command_exists("brew") {
-            let mut finding = command_finding("Homebrew cache", &["brew", "cleanup", "-s"]);
-            if let Some(note) = brew_reclaimable() {
-                finding = finding.with_note(note);
-            }
-            f.push(finding);
-            f.push(command_finding("Homebrew orphans", &["brew", "autoremove"]));
+            f.push(
+                sized_finding(
+                    "Homebrew cache",
+                    brew_cleanup_size(),
+                    &["brew", "cleanup", "-s"],
+                )
+                .with_note("old versions and downloads"),
+            );
+            let orphans = brew_orphans();
+            f.push(
+                sized_finding(
+                    "Homebrew orphans",
+                    orphans.iter().map(|p| fsutil::dir_size(p)).sum(),
+                    &["brew", "autoremove"],
+                )
+                .with_note(format!("{} unneeded formulae", orphans.len())),
+            );
         }
 
         if exec::command_exists("npm") {
@@ -132,55 +143,66 @@ impl Target for DevTools {
         }
 
         if exec::command_exists("uv") {
-            f.push(command_finding("uv cache", &["uv", "cache", "clean"]));
+            f.push(sized_finding(
+                "uv cache",
+                cache_size(&["uv", "cache", "dir"]),
+                &["uv", "cache", "clean"],
+            ));
         }
 
         if exec::command_exists("composer") {
-            f.push(command_finding(
+            f.push(sized_finding(
                 "composer cache",
+                cache_size(&["composer", "config", "--global", "cache-dir"]),
                 &["composer", "clear-cache"],
             ));
         }
 
         if exec::command_exists("conda") {
-            f.push(command_finding(
+            let pkgs = store_path(&["conda", "info", "--base"]).map(|base| base.join("pkgs"));
+            f.push(sized_finding(
                 "conda packages",
+                pkgs.as_deref().map(fsutil::dir_size).unwrap_or(0),
                 &["conda", "clean", "-a", "-y"],
             ));
         }
 
-        if exec::command_exists("xcrun") {
-            f.push(command_finding(
+        // The Command Line Tools ship `xcrun` without `simctl`; only a full
+        // Xcode has simulators to delete.
+        if let Some(devices) = unavailable_simulators(&cfg.home) {
+            f.push(sized_finding(
                 "unavailable simulators",
+                devices.iter().map(|p| fsutil::dir_size(p)).sum(),
                 &["xcrun", "simctl", "delete", "unavailable"],
             ));
         }
 
         if exec::command_exists("docker") {
-            let label = if cfg.aggressive {
-                "Docker (all unused images & networks)"
-            } else {
-                "Docker (unused images & networks)"
-            };
-            let mut finding = Finding::dir(
-                PathBuf::from(label),
-                0,
-                CleanAction::Command(docker_prune_cmd(cfg.aggressive, cfg.prune_volumes)),
-            );
-            if let Some(note) = docker_reclaimable() {
-                finding = finding.with_note(note);
+            if let Some(usage) = docker_usage() {
+                let label = if cfg.aggressive {
+                    "Docker (all unused images & networks)"
+                } else {
+                    "Docker (unused images & networks)"
+                };
+                f.push(
+                    Finding::dir(
+                        PathBuf::from(label),
+                        usage.reclaimable(cfg.aggressive, cfg.prune_volumes),
+                        CleanAction::Command(docker_prune_cmd(cfg.aggressive, cfg.prune_volumes)),
+                    )
+                    .with_note("inside the VM disk — see vm-images for the disk itself"),
+                );
             }
-            f.push(finding);
         }
+
+        // A cleanup command with nothing to clean is noise, and one whose tool
+        // can't reach its daemon would only fail.
+        f.retain(|x| !matches!(x.action, CleanAction::Command(_)) || x.size > 0);
 
         f.extend(catalog::dev_caches(&cfg.home));
 
         Ok(report)
     }
-}
-
-fn command_finding(label: &str, cmd: &[&str]) -> Finding {
-    Finding::dir(PathBuf::from(label), 0, CleanAction::Command(words(cmd)))
 }
 
 /// A cleanup run through a tool's own CLI, but weighed first. Without the size
@@ -237,22 +259,170 @@ fn abandoned_stores(active: Option<&Path>) -> Vec<Finding> {
     out
 }
 
-fn brew_reclaimable() -> Option<String> {
-    exec::capture(&words(&["brew", "cleanup", "--dry-run"]))
+/// What `brew cleanup -s` would free, from its own dry run.
+fn brew_cleanup_size() -> u64 {
+    exec::capture(&words(&["brew", "cleanup", "-s", "--dry-run"]))
         .ok()
-        .and_then(|out| {
-            out.lines()
-                .rev()
-                .find(|l| l.contains("approximately"))
-                .map(|l| l.trim().to_string())
-        })
+        .and_then(|out| parse_brew_cleanup(&out))
+        .unwrap_or(0)
 }
 
-fn docker_reclaimable() -> Option<String> {
-    exec::capture(&words(&["docker", "system", "df"]))
+/// `==> This operation would free approximately 1.3GB of disk space.`
+fn parse_brew_cleanup(out: &str) -> Option<u64> {
+    let line = out.lines().rev().find(|l| l.contains("approximately"))?;
+    let size = line
+        .split("approximately")
+        .nth(1)?
+        .split_whitespace()
+        .next()?;
+    parse_size(size)
+}
+
+/// Installed kegs `brew autoremove` would take away: the formulae nothing
+/// depends on any more.
+fn brew_orphans() -> Vec<PathBuf> {
+    let Some(cellar) = store_path(&["brew", "--cellar"]) else {
+        return Vec::new();
+    };
+    exec::capture(&words(&["brew", "autoremove", "--dry-run"]))
+        .map(|out| parse_brew_orphans(&out))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|name| cellar.join(name))
+        .filter(|keg| keg.is_dir())
+        .collect()
+}
+
+/// The names listed under `==> Would autoremove N unneeded formulae:`, with
+/// any tap prefix dropped to match the keg's folder in the Cellar.
+fn parse_brew_orphans(out: &str) -> Vec<String> {
+    out.lines()
+        .skip_while(|l| !l.contains("Would autoremove"))
+        .skip(1)
+        .take_while(|l| !l.trim().is_empty() && !l.starts_with("==>"))
+        .filter_map(|l| l.trim().rsplit('/').next().map(str::to_string))
+        .collect()
+}
+
+/// Devices `simctl` lists as unavailable (their runtime is gone), as the
+/// folders that hold their data. `None` without a full Xcode.
+fn unavailable_simulators(home: &Path) -> Option<Vec<PathBuf>> {
+    exec::capture(&words(&["xcrun", "--find", "simctl"]))
         .ok()
-        .filter(|out| !out.trim().is_empty())
-        .map(|_| "see `docker system df` for reclaimable size".to_string())
+        .filter(|p| !p.trim().is_empty())?;
+    let out = exec::capture(&words(&[
+        "xcrun",
+        "simctl",
+        "list",
+        "devices",
+        "unavailable",
+        "--json",
+    ]))
+    .ok()?;
+    let devices = home.join("Library/Developer/CoreSimulator/Devices");
+    Some(
+        parse_simulator_ids(&out)
+            .into_iter()
+            .map(|udid| devices.join(udid))
+            .filter(|dir| dir.is_dir())
+            .collect(),
+    )
+}
+
+fn parse_simulator_ids(json: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    value["devices"]
+        .as_object()
+        .into_iter()
+        .flat_map(|runtimes| runtimes.values())
+        .filter_map(|list| list.as_array())
+        .flatten()
+        .filter_map(|device| device["udid"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Reclaimable bytes per kind, as `docker system df` reports them.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DockerUsage {
+    images: u64,
+    containers: u64,
+    volumes: u64,
+    build_cache: u64,
+}
+
+impl DockerUsage {
+    /// What `docker system prune` with these flags would remove. Without `-a`
+    /// only dangling images go, and Docker doesn't report those apart, so
+    /// images are left out: the figure is a floor, not a promise.
+    fn reclaimable(&self, all_images: bool, volumes: bool) -> u64 {
+        let mut bytes = self.containers + self.build_cache;
+        if all_images {
+            bytes += self.images;
+        }
+        if volumes {
+            bytes += self.volumes;
+        }
+        bytes
+    }
+}
+
+/// `None` when the daemon can't be reached — stopped, or its VM is — in which
+/// case there's nothing a prune could do either.
+fn docker_usage() -> Option<DockerUsage> {
+    let out = exec::capture(&words(&[
+        "docker",
+        "system",
+        "df",
+        "--format",
+        "{{.Type}}\t{{.Reclaimable}}",
+    ]))
+    .ok()?;
+    parse_docker_usage(&out)
+}
+
+/// Lines of `Images\t1.2GB (45%)`.
+fn parse_docker_usage(out: &str) -> Option<DockerUsage> {
+    let mut usage = DockerUsage::default();
+    let mut seen = false;
+    for line in out.lines() {
+        let Some((kind, reclaimable)) = line.split_once('\t') else {
+            continue;
+        };
+        let bytes = reclaimable
+            .split_whitespace()
+            .next()
+            .and_then(parse_size)
+            .unwrap_or(0);
+        match kind.trim() {
+            "Images" => usage.images = bytes,
+            "Containers" => usage.containers = bytes,
+            "Local Volumes" => usage.volumes = bytes,
+            "Build Cache" => usage.build_cache = bytes,
+            _ => continue,
+        }
+        seen = true;
+    }
+    seen.then_some(usage)
+}
+
+/// Sizes as Homebrew and Docker print them: decimal units, `1.3GB`, `345kB`,
+/// `0B`.
+fn parse_size(text: &str) -> Option<u64> {
+    let text = text.trim();
+    let split = text.find(|c: char| c.is_ascii_alphabetic())?;
+    let (number, unit) = text.split_at(split);
+    let number: f64 = number.parse().ok()?;
+    let scale = match unit.to_ascii_uppercase().as_str() {
+        "B" => 1.0,
+        "KB" => 1e3,
+        "MB" => 1e6,
+        "GB" => 1e9,
+        "TB" => 1e12,
+        _ => return None,
+    };
+    Some((number * scale) as u64)
 }
 
 fn words(args: &[&str]) -> Vec<String> {
@@ -272,7 +442,57 @@ fn docker_prune_cmd(aggressive: bool, volumes: bool) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::docker_prune_cmd;
+    use super::*;
+
+    #[test]
+    fn parses_tool_sizes() {
+        assert_eq!(parse_size("1.3GB"), Some(1_300_000_000));
+        assert_eq!(parse_size("345kB"), Some(345_000));
+        assert_eq!(parse_size("37MB"), Some(37_000_000));
+        assert_eq!(parse_size("0B"), Some(0));
+        assert_eq!(parse_size("lots"), None);
+    }
+
+    #[test]
+    fn reads_what_brew_cleanup_would_free() {
+        let out = "Removing: /opt/homebrew/Cellar/x265/4.1... (12 files, 9.8MB)\n\
+                   ==> This operation would free approximately 1.3GB of disk space.\n";
+        assert_eq!(parse_brew_cleanup(out), Some(1_300_000_000));
+        assert_eq!(parse_brew_cleanup("Warning: Skipping uv\n"), None);
+    }
+
+    #[test]
+    fn reads_brew_orphans() {
+        let out = "==> Would autoremove 2 unneeded formulae:\n\
+                   libyaml\n\
+                   someone/tap/oniguruma\n";
+        assert_eq!(parse_brew_orphans(out), ["libyaml", "oniguruma"]);
+        assert!(parse_brew_orphans("").is_empty());
+    }
+
+    #[test]
+    fn reads_unavailable_simulators() {
+        let json = r#"{"devices": {
+            "com.apple.CoreSimulator.SimRuntime.iOS-16-4": [
+                {"udid": "A1", "name": "iPhone 14", "isAvailable": false}
+            ],
+            "com.apple.CoreSimulator.SimRuntime.iOS-17-0": []
+        }}"#;
+        assert_eq!(parse_simulator_ids(json), ["A1"]);
+        assert!(parse_simulator_ids("not json").is_empty());
+    }
+
+    #[test]
+    fn docker_reclaimable_follows_prune_flags() {
+        let out = "Images\t4.5GB (80%)\nContainers\t120MB (100%)\n\
+                   Local Volumes\t2GB (50%)\nBuild Cache\t1.1GB\n";
+        let usage = parse_docker_usage(out).unwrap();
+        assert_eq!(usage.reclaimable(false, false), 1_220_000_000);
+        assert_eq!(usage.reclaimable(true, false), 5_720_000_000);
+        assert_eq!(usage.reclaimable(true, true), 7_720_000_000);
+        // An unreachable daemon prints nothing on stdout.
+        assert_eq!(parse_docker_usage(""), None);
+    }
 
     #[test]
     fn docker_cmd_scales_with_flags() {

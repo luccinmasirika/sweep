@@ -50,6 +50,9 @@ impl Target for Heavy {
 /// same as a familiar build dir.
 struct Scan<'a> {
     min: u64,
+    /// The volume `home` lives on. Anything mounted inside it belongs to
+    /// another disk, and a network share there could hang the walk.
+    dev: Option<u64>,
     stale_after: Duration,
     /// Names owned by another target: counted towards a parent's weight, never
     /// reported here, so the same gigabytes aren't listed twice.
@@ -127,6 +130,7 @@ impl<'a> Scan<'a> {
         covered.extend(CACHE_NAMES);
         Self {
             min: cfg.heavy_min_bytes,
+            dev: fs::symlink_metadata(&cfg.home).map(|m| m.dev()).ok(),
             stale_after: Duration::from_secs(cfg.downloads_stale_days * 86_400),
             covered,
             covered_roots: crate::catalog::covered_roots(&cfg.home),
@@ -171,7 +175,7 @@ impl<'a> Scan<'a> {
                 }
                 continue;
             }
-            if !meta.is_dir() {
+            if !meta.is_dir() || self.dev.is_some_and(|dev| dev != meta.dev()) {
                 continue;
             }
 
