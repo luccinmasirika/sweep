@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -143,7 +144,7 @@ fn find_dirs(
         }
     }
 
-    found.sort_by(|a, b| b.size.cmp(&a.size));
+    found.sort_by_key(|a| Reverse(a.size));
     found
 }
 

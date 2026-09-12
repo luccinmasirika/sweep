@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -58,7 +59,7 @@ fn big_apps(roots: &[PathBuf], min: u64) -> Vec<Finding> {
             )
         })
         .collect();
-    found.sort_by(|a, b| b.size.cmp(&a.size));
+    found.sort_by_key(|a| Reverse(a.size));
     found
 }
 

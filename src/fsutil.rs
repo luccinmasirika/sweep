@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
@@ -600,7 +601,7 @@ fn parse_container(out: &str) -> Option<Container> {
                 consumed,
             });
         }
-        c.volumes.sort_by(|a, b| b.consumed.cmp(&a.consumed));
+        c.volumes.sort_by_key(|a| Reverse(a.consumed));
         return Some(c);
     }
     None
@@ -710,7 +711,7 @@ fn folder_breakdown(root: &Path) -> Vec<DirUsage> {
         })
         .filter(|f| f.size > 0 || f.unreadable)
         .collect();
-    folders.sort_by(|a, b| b.size.cmp(&a.size));
+    folders.sort_by_key(|a| Reverse(a.size));
     folders
 }
 
@@ -731,7 +732,7 @@ fn named_system_space(root: &Path) -> Vec<DirUsage> {
             })
         })
         .collect();
-    named.sort_by(|a, b| b.size.cmp(&a.size));
+    named.sort_by_key(|a| Reverse(a.size));
     named
 }
 
@@ -779,7 +780,7 @@ pub fn diagnose() -> Diagnosis {
                 }
             }
         }
-        library_dirs.sort_by(|a, b| b.size.cmp(&a.size));
+        library_dirs.sort_by_key(|a| Reverse(a.size));
     }
 
     Diagnosis {

@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -39,7 +40,7 @@ impl Target for Heavy {
         let mut report = Report::new(self.name());
         report.findings = scan.found;
         report.unreadable = scan.unreadable;
-        report.findings.sort_by(|a, b| b.size.cmp(&a.size));
+        report.findings.sort_by_key(|a| Reverse(a.size));
         Ok(report)
     }
 }

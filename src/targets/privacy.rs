@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -88,7 +89,7 @@ impl Target for Privacy {
         }
 
         f.retain(|x| x.size > 0 || x.unreadable);
-        f.sort_by(|a, b| b.size.cmp(&a.size));
+        f.sort_by_key(|a| Reverse(a.size));
         Ok(report)
     }
 }

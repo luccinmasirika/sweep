@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::path::Path;
 
 use crate::config::Config;
@@ -41,7 +42,7 @@ fn resolve(home: &Path, entries: &[Entry]) -> Vec<Finding> {
         }
         out.push(finding);
     }
-    out.sort_by(|a, b| b.size.cmp(&a.size));
+    out.sort_by_key(|a| Reverse(a.size));
     out
 }
 

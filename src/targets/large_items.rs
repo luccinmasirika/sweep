@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::fs;
 use std::time::{Duration, SystemTime};
 
@@ -65,7 +66,7 @@ impl Target for LargeItems {
             }
         }
 
-        findings.sort_by(|a, b| b.size.cmp(&a.size));
+        findings.sort_by_key(|a| Reverse(a.size));
         report.findings = findings;
         Ok(report)
     }

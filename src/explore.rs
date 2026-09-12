@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
@@ -56,7 +57,7 @@ pub(crate) fn children(dir: &Path) -> Vec<Item> {
         Err(_) => Vec::new(),
     };
     spinner.finish_and_clear();
-    items.sort_by(|a, b| b.size.cmp(&a.size));
+    items.sort_by_key(|a| Reverse(a.size));
     items
 }
 
@@ -115,12 +116,12 @@ fn browse(mut cwd: PathBuf) -> Result<()> {
 
         match actions[a] {
             "Open" => cwd = item.path.clone(),
-            "Move to Trash" => {
-                if ui::confirm(&format!("Move {} to Trash?", ui::pretty_path(&item.path)))? {
-                    match fsutil::remove_path(&item.path, false) {
-                        Ok(()) => ui::ok("moved to Trash"),
-                        Err(e) => ui::warn(&format!("{e}")),
-                    }
+            "Move to Trash"
+                if ui::confirm(&format!("Move {} to Trash?", ui::pretty_path(&item.path)))? =>
+            {
+                match fsutil::remove_path(&item.path, false) {
+                    Ok(()) => ui::ok("moved to Trash"),
+                    Err(e) => ui::warn(&format!("{e}")),
                 }
             }
             _ => {}

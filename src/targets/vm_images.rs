@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use anyhow::Result;
 
 use super::Target;
@@ -97,7 +99,7 @@ impl Target for VmImages {
                     .with_note(rt.note),
             );
         }
-        report.findings.sort_by(|a, b| b.size.cmp(&a.size));
+        report.findings.sort_by_key(|a| Reverse(a.size));
         Ok(report)
     }
 }

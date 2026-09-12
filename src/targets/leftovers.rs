@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use anyhow::Result;
@@ -48,7 +49,7 @@ impl Target for Leftovers {
             }
         }
 
-        report.findings.sort_by(|a, b| b.size.cmp(&a.size));
+        report.findings.sort_by_key(|a| Reverse(a.size));
         Ok(report)
     }
 }
