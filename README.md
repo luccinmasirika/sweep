@@ -52,10 +52,20 @@ sweep config               # print the effective configuration
 ```
 
 Removable items (project dirs, big files) are **moved to the Trash** so a
-mistake is undoable with Finder's "Put Back"; empty the Trash to reclaim the
-space, or pass `--purge` to delete immediately. Pure caches are always deleted
-outright. `--yes` only touches safe, idle items — never personal files or
-projects that still look active.
+mistake is undoable with Finder's "Put Back", or pass `--purge` to delete
+immediately. Pure caches are always deleted outright. `--yes` only touches
+safe, idle items — never personal files or projects that still look active.
+
+Moving something to the Trash frees nothing, so at the end of an interactive
+run sweep offers to empty **exactly what that run moved there** — found again
+by inode, since the Finder renames items whose name is already taken. Whatever
+you put in the Trash yourself is never part of it, and the Trash itself is
+never emptied by `--yes`, `smart` or a scheduled run: it is listed as a
+personal item and only goes if you tick it.
+
+In the per-target menu, the default action cleans the safe items only — the
+same set `--yes` would take. Personal files, active projects and the Trash are
+reached through "Choose items…", so a stray Enter can't delete them.
 
 ## What it detects
 

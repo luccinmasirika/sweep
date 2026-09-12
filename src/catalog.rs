@@ -106,11 +106,13 @@ pub fn system_caches(cfg: &Config) -> Vec<Finding> {
                 note: Some("logs"),
                 risky: false,
             },
+            // Your undo buffer, not a cache: emptying it can't be taken back,
+            // so it always takes a deliberate tick and `--yes` never does it.
             Entry {
                 rel: ".Trash",
                 action: Action::Empty,
-                note: Some("trash"),
-                risky: false,
+                note: Some("your Trash — emptying it can't be undone"),
+                risky: true,
             },
         ],
     )
@@ -265,6 +267,29 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_trash_is_never_emptied_without_asking() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir(home.path().join(".Trash")).unwrap();
+        fs::write(home.path().join(".Trash/old.zip"), vec![0u8; 4096]).unwrap();
+        fs::create_dir_all(home.path().join("Library/Caches/app")).unwrap();
+        fs::write(home.path().join("Library/Caches/app/blob"), vec![0u8; 4096]).unwrap();
+
+        let cfg = Config {
+            home: home.path().to_path_buf(),
+            ..Default::default()
+        };
+        let found = system_caches(&cfg);
+
+        let trash = found.iter().find(|f| f.path.ends_with(".Trash")).unwrap();
+        assert!(
+            !trash.auto(),
+            "`--yes` and scheduled runs must skip the Trash"
+        );
+        let caches = found.iter().find(|f| f.path.ends_with("Caches")).unwrap();
+        assert!(caches.auto());
+    }
 
     #[test]
     fn a_refused_trash_stays_in_the_report() {

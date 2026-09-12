@@ -35,9 +35,17 @@ pub fn run(cfg: &Config, yes: bool, purge: bool) -> Result<u32> {
         }
     }
 
-    let (freed, trashed, failures) = cli::apply_findings(&safe, purge);
-    ui::print_freed(freed, trashed, before, fsutil::free_space_root());
-    Ok(failures)
+    let mut outcome = cli::apply_findings(&safe, purge);
+    ui::print_freed(
+        outcome.freed,
+        outcome.trash.bytes(),
+        before,
+        fsutil::free_space_root(),
+    );
+    if !yes && interactive() {
+        outcome.failures += cli::offer_to_empty(&outcome.trash)?;
+    }
+    Ok(outcome.failures)
 }
 
 fn interactive() -> bool {

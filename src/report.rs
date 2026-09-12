@@ -114,22 +114,23 @@ impl Report {
     }
 }
 
-/// Runs a finding's action and returns the bytes it accounts for. For commands
-/// the figure is the estimate we computed at scan time, not a measured value.
-/// `purge` forces a real delete for `RemovePath` instead of a move to Trash.
-pub fn apply(finding: &Finding, purge: bool) -> Result<u64> {
+/// Runs a finding's action and returns the bytes it accounts for, plus what it
+/// moved to the Trash if it did. For commands the figure is the estimate we
+/// computed at scan time, not a measured value. `purge` forces a real delete
+/// for `RemovePath` instead of a move to Trash.
+pub fn apply(finding: &Finding, purge: bool) -> Result<(u64, Option<fsutil::TrashId>)> {
     match &finding.action {
         CleanAction::RemovePath => {
-            fsutil::remove_path(&finding.path, purge)?;
-            Ok(finding.size)
+            let trashed = fsutil::remove_path(&finding.path, purge)?;
+            Ok((finding.size, trashed))
         }
         CleanAction::EmptyDir => {
             fsutil::empty_dir(&finding.path)?;
-            Ok(finding.size)
+            Ok((finding.size, None))
         }
         CleanAction::Command(cmd) => {
             exec::run(cmd)?;
-            Ok(finding.size)
+            Ok((finding.size, None))
         }
     }
 }

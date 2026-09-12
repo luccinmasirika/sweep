@@ -120,7 +120,7 @@ fn browse(mut cwd: PathBuf) -> Result<()> {
                 if ui::confirm(&format!("Move {} to Trash?", ui::pretty_path(&item.path)))? =>
             {
                 match fsutil::remove_path(&item.path, false) {
-                    Ok(()) => ui::ok("moved to Trash"),
+                    Ok(_) => ui::ok("moved to Trash"),
                     Err(e) => ui::warn(&format!("{e}")),
                 }
             }

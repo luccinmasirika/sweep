@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use crate::config::Config;
 use crate::exec;
 use crate::fsutil;
-use crate::report::{apply, CleanAction, Finding, Report};
+use crate::report::{apply, Finding, Report};
 use crate::targets;
 use crate::ui;
 
@@ -153,9 +153,7 @@ pub fn run_clean(
 
     let before = fsutil::free_space_root();
     let reports = collect(&cfg, only)?;
-    let mut freed: u64 = 0;
-    let mut trashed: u64 = 0;
-    let mut failures: u32 = 0;
+    let mut outcome = Outcome::default();
 
     for report in &reports {
         if report.is_empty() {
@@ -164,15 +162,9 @@ pub fn run_clean(
         ui::print_report(report);
 
         let chosen: Vec<&Finding> = if guided {
-            let all_default_off = !report.findings.iter().any(Finding::auto);
-            match ui::choose_action(
-                &report.target,
-                report.findings.len(),
-                report.total_size(),
-                all_default_off,
-            )? {
+            match ui::choose_action(report)? {
                 ui::Action::Skip => continue,
-                ui::Action::All => report.findings.iter().collect(),
+                ui::Action::Safe => report.findings.iter().filter(|f| f.auto()).collect(),
                 ui::Action::Choose => ui::select_findings(report)?
                     .iter()
                     .filter_map(|&i| report.findings.get(i))
@@ -188,44 +180,95 @@ pub fn run_clean(
             continue;
         }
 
-        let (fr, tr, fa) = apply_findings(&chosen, purge);
-        freed += fr;
-        trashed += tr;
-        failures += fa;
+        outcome.absorb(apply_findings(&chosen, purge));
         ui::ok(&format!("{} cleaned", report.target));
     }
 
-    ui::print_freed(freed, trashed, before, fsutil::free_space_root());
+    ui::print_freed(
+        outcome.freed,
+        outcome.trash.bytes(),
+        before,
+        fsutil::free_space_root(),
+    );
+    if guided {
+        outcome.failures += offer_to_empty(&outcome.trash)?;
+    }
+    Ok(outcome.failures)
+}
+
+/// What applying a batch of findings did. Trashed items are kept apart from
+/// freed bytes: they only reclaim space once they leave the Trash.
+#[derive(Default)]
+pub(crate) struct Outcome {
+    pub freed: u64,
+    pub failures: u32,
+    pub trash: fsutil::TrashLog,
+}
+
+impl Outcome {
+    fn absorb(&mut self, other: Outcome) {
+        self.freed += other.freed;
+        self.failures += other.failures;
+        self.trash.extend(other.trash);
+    }
+}
+
+/// Offer to empty what this run moved to the Trash — those items and nothing
+/// else. Whatever the user put in the Trash themselves stays until they empty
+/// it. Only ever called when someone is there to answer.
+pub(crate) fn offer_to_empty(trash: &fsutil::TrashLog) -> Result<u32> {
+    if trash.is_empty() {
+        return Ok(0);
+    }
+    let found = trash.locate();
+    if found.is_empty() {
+        return Ok(0);
+    }
+    let bytes: u64 = found.iter().map(|(_, size)| size).sum();
+    println!();
+    if !ui::confirm(&format!(
+        "Empty the {} item(s) this run moved to the Trash, to free {} now? This can't be undone",
+        found.len(),
+        ui::human(bytes)
+    ))? {
+        println!("  left in the Trash — the rest of your Trash was not touched");
+        return Ok(0);
+    }
+
+    let before = fsutil::free_space_root();
+    let mut freed = 0;
+    let mut failures = 0;
+    for (path, size) in &found {
+        match fsutil::delete_from_trash(path) {
+            Ok(()) => freed += size,
+            Err(e) => {
+                failures += 1;
+                ui::warn(&format!("{}: {e}", ui::pretty_path(path)));
+            }
+        }
+    }
+    ui::print_freed(freed, 0, before, fsutil::free_space_root());
     Ok(failures)
 }
 
-/// Apply a batch of findings with a progress bar, returning
-/// `(freed, trashed, failures)`. Trashed bytes are tracked apart from freed
-/// because they only reclaim space once the Trash is emptied.
-pub(crate) fn apply_findings(chosen: &[&Finding], purge: bool) -> (u64, u64, u32) {
-    let mut freed = 0;
-    let mut trashed = 0;
-    let mut failures = 0;
+/// Apply a batch of findings with a progress bar.
+pub(crate) fn apply_findings(chosen: &[&Finding], purge: bool) -> Outcome {
+    let mut outcome = Outcome::default();
     let pb = ui::clean_progress(chosen.len() as u64);
     for finding in chosen {
         pb.set_message(ui::pretty_path(&finding.path));
         match apply(finding, purge) {
-            Ok(bytes) => {
-                if !purge && matches!(finding.action, CleanAction::RemovePath) {
-                    trashed += bytes;
-                } else {
-                    freed += bytes;
-                }
-            }
+            Ok((bytes, Some(id))) => outcome.trash.record(id, bytes),
+            Ok((bytes, None)) => outcome.freed += bytes,
             Err(e) => {
-                failures += 1;
+                outcome.failures += 1;
                 ui::warn(&format!("{}: {e}", ui::pretty_path(&finding.path)));
             }
         }
         pb.inc(1);
     }
     pb.finish_and_clear();
-    (freed, trashed, failures)
+    outcome
 }
 
 pub fn run_config(cfg: &Config, json: bool) -> Result<()> {

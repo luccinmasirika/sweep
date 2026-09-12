@@ -26,14 +26,16 @@ pub fn run(queries: Vec<String>, json: bool, purge: bool) -> Result<u32> {
     };
 
     let mut failures = 0;
+    let mut trash = fsutil::TrashLog::default();
     for app in targets {
         let footprint = footprint(&app);
         if json {
             ui::print_json(&to_json(&app, &footprint))?;
             continue;
         }
-        failures += uninstall_one(&app, footprint, purge)?;
+        failures += uninstall_one(&app, footprint, purge, &mut trash)?;
     }
+    failures += crate::cli::offer_to_empty(&trash)?;
     Ok(failures)
 }
 
@@ -122,15 +124,19 @@ pub(crate) fn footprint(app: &App) -> Vec<PathBuf> {
     paths
 }
 
-fn uninstall_one(app: &App, footprint: Vec<PathBuf>, purge: bool) -> Result<u32> {
+fn uninstall_one(
+    app: &App,
+    footprint: Vec<PathBuf>,
+    purge: bool,
+    trash: &mut fsutil::TrashLog,
+) -> Result<u32> {
     println!();
     println!("{}  ({})", app.name, app.id);
-    let mut total = 0;
-    for p in &footprint {
-        let size = fsutil::path_size(p);
-        total += size;
-        println!("  {:>10}  {}", ui::human(size), ui::pretty_path(p));
+    let sizes: Vec<u64> = footprint.iter().map(|p| fsutil::path_size(p)).collect();
+    for (p, size) in footprint.iter().zip(&sizes) {
+        println!("  {:>10}  {}", ui::human(*size), ui::pretty_path(p));
     }
+    let total: u64 = sizes.iter().sum();
     println!("  {}", format_args!("↳ {} total", ui::human(total)));
 
     let verb = if purge { "delete" } else { "move to Trash" };
@@ -143,10 +149,14 @@ fn uninstall_one(app: &App, footprint: Vec<PathBuf>, purge: bool) -> Result<u32>
     }
 
     let mut failures = 0;
-    for p in &footprint {
-        if let Err(e) = fsutil::remove_path(p, purge) {
-            failures += 1;
-            ui::warn(&format!("{}: {e}", ui::pretty_path(p)));
+    for (p, size) in footprint.iter().zip(sizes) {
+        match fsutil::remove_path(p, purge) {
+            Ok(Some(id)) => trash.record(id, size),
+            Ok(None) => {}
+            Err(e) => {
+                failures += 1;
+                ui::warn(&format!("{}: {e}", ui::pretty_path(p)));
+            }
         }
     }
     if failures == 0 {

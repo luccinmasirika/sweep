@@ -276,7 +276,7 @@ pub fn print_freed(freed: u64, trashed: u64, before: Option<u64>, after: Option<
         println!(
             "   to Trash    {}  {}",
             human(trashed).yellow().bold(),
-            "(empty the Trash to reclaim it)".dimmed()
+            "(still recoverable from the Trash)".dimmed()
         );
     }
     if let (Some(b), Some(a)) = (before, after) {
@@ -297,38 +297,53 @@ pub fn menu_theme() -> ColorfulTheme {
 }
 
 pub enum Action {
-    All,
+    Safe,
     Choose,
     Skip,
 }
 
 /// Action menu shown for one target. Arrow keys move, Enter runs the
 /// highlighted line, so there's no toggle-then-confirm to puzzle over.
-pub fn choose_action(
-    target: &str,
-    count: usize,
-    total: u64,
-    all_default_off: bool,
-) -> Result<Action> {
-    let items = [
-        format!("Clean all ({})", human(total)),
-        "Choose items…".to_string(),
-        "Skip".to_string(),
-    ];
-    // Default to Skip when nothing here is a safe default (all personal or
-    // still-active), otherwise to Clean all.
-    let default = if all_default_off { 2 } else { 0 };
+pub fn choose_action(report: &Report) -> Result<Action> {
+    let safe: Vec<&Finding> = report.findings.iter().filter(|f| f.auto()).collect();
+    let safe_bytes: u64 = safe.iter().map(|f| f.size).sum();
+
+    // The one-keystroke option only ever covers what `--yes` would take.
+    // Personal files, active projects and your Trash need "Choose items…",
+    // so a stray Enter can't reach them.
+    let mut items = Vec::new();
+    if !safe.is_empty() {
+        items.push(format!(
+            "Clean the {} safe item(s) ({})",
+            safe.len(),
+            human(safe_bytes)
+        ));
+    }
+    items.push("Choose items…".to_string());
+    items.push("Skip".to_string());
+
     println!(
         "  {}",
-        format!("{count} items · {} · ↑/↓ then enter", human(total)).dimmed()
+        format!(
+            "{} items · {} · ↑/↓ then enter",
+            report.findings.len(),
+            human(report.total_size())
+        )
+        .dimmed()
     );
+    let default = if safe.is_empty() { items.len() - 1 } else { 0 };
     let choice = dialoguer::Select::with_theme(&menu_theme())
-        .with_prompt(format!("{} {}", icon(target), target.to_uppercase()))
+        .with_prompt(format!(
+            "{} {}",
+            icon(&report.target),
+            report.target.to_uppercase()
+        ))
         .items(&items)
         .default(default)
         .interact()?;
-    Ok(match choice {
-        0 => Action::All,
+    let offset = usize::from(safe.is_empty());
+    Ok(match choice + offset {
+        0 => Action::Safe,
         1 => Action::Choose,
         _ => Action::Skip,
     })

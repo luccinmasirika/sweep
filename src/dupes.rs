@@ -40,6 +40,7 @@ pub fn run(start: Option<PathBuf>, json: bool) -> Result<()> {
         ui::human(reclaimable)
     );
     let trashing = interactive();
+    let mut trash = fsutil::TrashLog::default();
     for set in &sets {
         println!();
         println!(
@@ -54,11 +55,19 @@ pub fn run(start: Option<PathBuf>, json: bool) -> Result<()> {
         if trashing && ui::confirm("Move all but the first to Trash?")? {
             for p in &set.paths[1..] {
                 match fsutil::remove_path(p, false) {
-                    Ok(()) => ui::ok(&format!("trashed {}", ui::pretty_path(p))),
+                    Ok(id) => {
+                        if let Some(id) = id {
+                            trash.record(id, set.size);
+                        }
+                        ui::ok(&format!("trashed {}", ui::pretty_path(p)));
+                    }
                     Err(e) => ui::warn(&format!("{}: {e}", ui::pretty_path(p))),
                 }
             }
         }
+    }
+    if trashing {
+        crate::cli::offer_to_empty(&trash)?;
     }
     Ok(())
 }

@@ -296,9 +296,11 @@ fn is_protected(path: &Path, roots: &[PathBuf]) -> bool {
 
 /// Remove a path. By default it moves to the Trash so a mistake is recoverable
 /// with Finder's "Put Back"; `purge` deletes it outright to reclaim space now.
-pub fn remove_path(path: &Path, purge: bool) -> Result<()> {
+/// A move to the Trash returns what it moved, so the caller can later offer to
+/// empty exactly that and nothing else.
+pub fn remove_path(path: &Path, purge: bool) -> Result<Option<TrashId>> {
     let Ok(meta) = fs::symlink_metadata(path) else {
-        return Ok(());
+        return Ok(None);
     };
     if is_protected(path, protected_roots()) {
         bail!(
@@ -307,10 +309,93 @@ pub fn remove_path(path: &Path, purge: bool) -> Result<()> {
         );
     }
     if purge {
-        hard_remove(path, &meta)
-    } else {
-        trash::delete(path).with_context(|| format!("moving {} to Trash", path.display()))
+        hard_remove(path, &meta)?;
+        return Ok(None);
     }
+    trash::delete(path).with_context(|| format!("moving {} to Trash", path.display()))?;
+    Ok(Some(TrashId {
+        dev: meta.dev(),
+        ino: meta.ino(),
+    }))
+}
+
+/// Something moved to the Trash, recognised by inode. The Finder renames an
+/// item on arrival when its name is taken (`.next 11.23.55`), but a move within
+/// a volume keeps the inode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TrashId {
+    dev: u64,
+    ino: u64,
+}
+
+/// What one run moved to the Trash. The Trash also holds whatever the user put
+/// there, which is theirs to keep until they empty it themselves; this is how
+/// a run tells its own items apart.
+#[derive(Debug, Default)]
+pub struct TrashLog {
+    items: Vec<(TrashId, u64)>,
+}
+
+impl TrashLog {
+    pub fn record(&mut self, id: TrashId, size: u64) {
+        self.items.push((id, size));
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.items.iter().map(|(_, size)| size).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn extend(&mut self, other: TrashLog) {
+        self.items.extend(other.items);
+    }
+
+    /// Where each recorded item sits in the Trash now, with its size. Items the
+    /// user has since put back or deleted are simply not found.
+    pub fn locate(&self) -> Vec<(PathBuf, u64)> {
+        self.locate_in(&all_trashes())
+    }
+
+    fn locate_in(&self, trashes: &[PathBuf]) -> Vec<(PathBuf, u64)> {
+        let wanted: HashMap<TrashId, u64> = self.items.iter().copied().collect();
+        let mut found = Vec::new();
+        for trash in trashes {
+            let Ok(entries) = fs::read_dir(trash) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let Ok(meta) = entry.metadata() else { continue };
+                let id = TrashId {
+                    dev: meta.dev(),
+                    ino: meta.ino(),
+                };
+                if let Some(size) = wanted.get(&id) {
+                    found.push((entry.path(), *size));
+                }
+            }
+        }
+        found
+    }
+}
+
+/// Delete an item for good, but only one sitting directly in a Trash folder —
+/// a last check that emptying "what we trashed" can never reach anywhere else.
+pub fn delete_from_trash(path: &Path) -> Result<()> {
+    delete_from(path, &all_trashes())
+}
+
+fn delete_from(path: &Path, trashes: &[PathBuf]) -> Result<()> {
+    if !path
+        .parent()
+        .is_some_and(|dir| trashes.iter().any(|t| t == dir))
+    {
+        bail!("refusing to delete {}: not in the Trash", path.display());
+    }
+    let meta = fs::symlink_metadata(path)?;
+    hard_remove(path, &meta)
 }
 
 /// Unlink a path for real. A symlink is removed as the link itself, never
@@ -959,6 +1044,50 @@ pub(crate) mod tests {
         // A key Foundation didn't return comes back as "undefined".
         assert_eq!(parse_capacity("16171790336 undefined"), None);
         assert_eq!(parse_capacity(""), None);
+    }
+
+    #[test]
+    fn finds_its_own_items_in_the_trash_even_renamed() {
+        let root = tempfile::tempdir().unwrap();
+        let trash = root.path().join(".Trash");
+        fs::create_dir(&trash).unwrap();
+        let project = root.path().join("app/.next");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("chunk.js"), b"x").unwrap();
+        // Already in the Trash, put there by the user.
+        fs::write(trash.join("keep-me.zip"), b"mine").unwrap();
+
+        let meta = fs::symlink_metadata(&project).unwrap();
+        let mut log = TrashLog::default();
+        log.record(
+            TrashId {
+                dev: meta.dev(),
+                ino: meta.ino(),
+            },
+            42,
+        );
+        // What the Finder does when `.next` is already taken.
+        fs::rename(&project, trash.join(".next 11.23.55")).unwrap();
+
+        let found = log.locate_in(std::slice::from_ref(&trash));
+        assert_eq!(found, vec![(trash.join(".next 11.23.55"), 42)]);
+
+        delete_from(&found[0].0, std::slice::from_ref(&trash)).unwrap();
+        assert!(!trash.join(".next 11.23.55").exists());
+        assert!(trash.join("keep-me.zip").exists());
+    }
+
+    #[test]
+    fn emptying_never_reaches_outside_the_trash() {
+        let root = tempfile::tempdir().unwrap();
+        let trash = root.path().join(".Trash");
+        fs::create_dir(&trash).unwrap();
+        let outside = root.path().join("Documents");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("thesis.pdf"), b"x").unwrap();
+
+        assert!(delete_from(&outside.join("thesis.pdf"), &[trash]).is_err());
+        assert!(outside.join("thesis.pdf").exists());
     }
 
     #[test]
