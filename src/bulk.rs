@@ -75,9 +75,21 @@ mod darwin {
         static BUF: RefCell<Vec<u8>> = RefCell::new(vec![0; 128 * 1024]);
     }
 
+    /// Opening a folder the sandbox refuses inside an app container takes
+    /// microseconds on its own and five seconds when several refusals arrive
+    /// at once, so folders there are opened one at a time. Listing them stays
+    /// parallel.
+    static CONTAINERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn in_containers(dir: &Path) -> bool {
+        let mut parts = dir.components().map(|c| c.as_os_str());
+        parts.any(|p| p == "Library") && parts.next().is_some_and(|p| p == "Containers")
+    }
+
     pub fn list(dir: &Path) -> io::Result<Listing> {
         let c_dir = CString::new(dir.as_os_str().as_bytes())
             .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        let one_at_a_time = in_containers(dir).then(|| CONTAINERS.lock());
         // SAFETY: a valid NUL-terminated path; the descriptor is closed below.
         let fd = unsafe {
             libc::open(
@@ -85,6 +97,7 @@ mod darwin {
                 libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
             )
         };
+        drop(one_at_a_time);
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
