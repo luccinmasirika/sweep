@@ -212,12 +212,19 @@ impl Config {
     }
 }
 
+/// Only the user's own config is read without being named. A `sweep.toml` in
+/// whatever directory sweep runs from could come from a cloned repository, and
+/// one line — `project_dir_names = ["src"]` — would turn a clean into a wipe.
+///
+/// `~/.config/sweep/config.toml` is the documented place; `dirs::config_dir`
+/// is `~/Library/Application Support` on macOS, which is looked at after it.
 fn default_config_path() -> Option<PathBuf> {
-    let local = PathBuf::from("sweep.toml");
-    if local.exists() {
-        return Some(local);
-    }
-    dirs::config_dir().map(|d| d.join("sweep/config.toml"))
+    let dotconfig = dirs::home_dir().map(|h| h.join(".config/sweep/config.toml"));
+    let native = dirs::config_dir().map(|d| d.join("sweep/config.toml"));
+    [dotconfig, native]
+        .into_iter()
+        .flatten()
+        .find(|p| p.exists())
 }
 
 fn expand(path: &Path) -> PathBuf {

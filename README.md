@@ -198,9 +198,11 @@ it.
 ## Configuration
 
 Defaults work out of the box. To customise, copy
-[`sweep.example.toml`](sweep.example.toml) to `./sweep.toml` or
-`~/.config/sweep/config.toml`, or point at any file with `--config`. Paths
-support `~` expansion and missing fields fall back to the built-in defaults.
+[`sweep.example.toml`](sweep.example.toml) to `~/.config/sweep/config.toml`, or
+point at any file with `--config`. A `sweep.toml` in the current directory is
+not read on its own: one from a cloned repository could widen what gets
+deleted. Paths support `~` expansion and missing fields fall back to the
+built-in defaults.
 
 ## Development
 

@@ -1,5 +1,6 @@
 # sweep works with no config at all — everything below is optional.
-# Copy to ./sweep.toml or ~/.config/sweep/config.toml to override a default.
+# Copy to ~/.config/sweep/config.toml, or pass any file with --config, to
+# override a default.
 
 # Turn whole detectors on or off.
 system_caches = true
