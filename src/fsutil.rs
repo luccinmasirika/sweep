@@ -75,43 +75,71 @@ pub fn dir_usage(path: &Path) -> Usage {
             }
         });
 
-    let mut inodes = HashSet::new();
-    // Blocks a clone family shares, counted once per family. APFS gives an
-    // edited clone a new id, so its shared blocks can no longer be matched to
-    // the source and are counted again — never less than the truth, at worst
-    // what `du` would say.
-    let mut shared: HashMap<(u64, u64), u64> = HashMap::new();
-    let mut usage = Usage::default();
+    let mut tally = Tally::default();
+    let mut unreadable = false;
     for entry in walk {
         let entry = match entry {
             Ok(entry) => entry,
             Err(e) => {
-                usage.unreadable |= is_denied(&e);
+                unreadable |= is_denied(&e);
                 continue;
             }
         };
         // jwalk hands back a directory it couldn't list as a normal entry,
         // with the refusal tucked inside it.
         if let Some(e) = &entry.read_children_error {
-            usage.unreadable |= is_denied(e);
+            unreadable |= is_denied(e);
         }
-        let Some(file) = entry.client_state else {
-            continue;
-        };
-        if !inodes.insert((file.dev, file.ino)) {
-            continue;
+        if let Some(file) = entry.client_state {
+            tally.add(file);
+        }
+    }
+    Usage {
+        bytes: tally.bytes(),
+        unreadable,
+    }
+}
+
+/// On-disk bytes of these files taken together: a file linked twice counts
+/// once, and so do the blocks clones share.
+pub fn files_bytes(paths: &[PathBuf]) -> u64 {
+    let mut tally = Tally::default();
+    for file in paths.iter().filter_map(|p| file_blocks(p)) {
+        tally.add(file);
+    }
+    tally.bytes()
+}
+
+/// Adds up files as they cost on disk.
+#[derive(Default)]
+struct Tally {
+    inodes: HashSet<(u64, u64)>,
+    private: u64,
+    /// Blocks a clone family shares, counted once per family. APFS gives an
+    /// edited clone a new id, so its shared blocks can no longer be matched to
+    /// the source and are counted again — never less than the truth, at worst
+    /// what `du` would say.
+    shared: HashMap<(u64, u64), u64>,
+}
+
+impl Tally {
+    fn add(&mut self, file: FileBlocks) {
+        if !self.inodes.insert((file.dev, file.ino)) {
+            return;
         }
         match file.clone {
             Some((id, bytes)) => {
-                usage.bytes += file.bytes - bytes;
-                let family = shared.entry((file.dev, id)).or_default();
+                self.private += file.bytes - bytes;
+                let family = self.shared.entry((file.dev, id)).or_default();
                 *family = (*family).max(bytes);
             }
-            None => usage.bytes += file.bytes,
+            None => self.private += file.bytes,
         }
     }
-    usage.bytes += shared.values().sum::<u64>();
-    usage
+
+    fn bytes(&self) -> u64 {
+        self.private + self.shared.values().sum::<u64>()
+    }
 }
 
 /// What a single file occupies, and how much of that it may share.
