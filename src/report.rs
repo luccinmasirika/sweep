@@ -268,6 +268,7 @@ pub struct Plan {
 /// The dry run of `apply`: the same in-use checks, so a planned clean and a
 /// real one leave exactly the same things behind.
 pub fn plan(finding: &Finding, purge: bool, in_use: &InUse) -> Plan {
+    let purge = purges(finding, purge);
     match &finding.action {
         CleanAction::RemovePath => match in_use.why(&finding.path) {
             Some(reason) => Plan {
@@ -318,11 +319,19 @@ pub fn plan(finding: &Finding, purge: bool, in_use: &InUse) -> Plan {
     }
 }
 
+/// Whether `--purge` really deletes this finding. Personal data — a backup, a
+/// big file, an archive — goes to the Trash whatever the flag says: the flag
+/// is for reclaiming regenerable space at once, not for making a tick final.
+pub fn purges(finding: &Finding, purge: bool) -> bool {
+    purge && !finding.risky && matches!(finding.action, CleanAction::RemovePath)
+}
+
 /// Runs a finding's action and measures what it achieved. Nothing in use is
 /// touched: a path something is using is skipped whole, and emptying a folder
-/// leaves its busy entries behind. `purge` forces a real delete for
-/// `RemovePath` instead of a move to Trash.
+/// leaves its busy entries behind. `purge` forces a real delete for a
+/// regenerable `RemovePath` instead of a move to Trash.
 pub fn apply(finding: &Finding, purge: bool, in_use: &InUse) -> Applied {
+    let purge = purges(finding, purge);
     match &finding.action {
         CleanAction::RemovePath => {
             if let Some(reason) = in_use.why(&finding.path) {
@@ -562,6 +571,26 @@ mod tests {
 
         assert_eq!(reports[0].findings[0].size, 500);
         assert_eq!(reports[0].findings[1].size, 400);
+    }
+
+    #[test]
+    fn purge_never_makes_a_personal_item_final() {
+        let backup = Finding::dir(
+            PathBuf::from("/Users/me/Library/Application Support/MobileSync/Backup"),
+            9_000,
+            CleanAction::RemovePath,
+        )
+        .risky(true);
+        assert!(!purges(&backup, true));
+        assert_eq!(plan(&backup, true, &InUse::default()).verb, "trash");
+
+        let deps = Finding::dir(
+            PathBuf::from("/Users/me/code/app/node_modules"),
+            9_000,
+            CleanAction::RemovePath,
+        );
+        assert!(purges(&deps, true));
+        assert_eq!(plan(&deps, true, &InUse::default()).verb, "delete");
     }
 
     #[test]

@@ -209,6 +209,23 @@ pub fn run_clean(
             continue;
         }
 
+        // A tick then Enter is quick; with --purge it is also final. Say so
+        // once, with what it covers, before anything goes.
+        let final_items: Vec<&&Finding> = chosen
+            .iter()
+            .filter(|f| crate::report::purges(f, purge))
+            .collect();
+        if guided && !final_items.is_empty() {
+            let bytes: u64 = final_items.iter().map(|f| f.size).sum();
+            if !ui::confirm(&format!(
+                "Delete {} item(s) ({}) for good, without the Trash?",
+                final_items.len(),
+                ui::human(bytes)
+            ))? {
+                continue;
+            }
+        }
+
         if in_use.is_none() {
             in_use = Some(InUse::capture()?);
         }
