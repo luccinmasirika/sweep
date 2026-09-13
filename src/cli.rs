@@ -124,19 +124,39 @@ fn interactive() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
+/// Every chosen target scanned at once, reports kept in the targets' order.
+/// The spinner names the ones still running.
 pub fn collect(cfg: &Config, only: &[String]) -> Result<Vec<Report>> {
-    let chosen = targets::all()
+    let chosen: Vec<_> = targets::all()
         .into_iter()
         .filter(|t| t.enabled(cfg))
-        .filter(|t| only.is_empty() || only.iter().any(|n| n == t.name()));
+        .filter(|t| only.is_empty() || only.iter().any(|n| n == t.name()))
+        .collect();
 
-    let mut reports = Vec::new();
-    for target in chosen {
-        let spinner = ui::spinner(target.name());
-        let report = target.scan(cfg)?;
-        spinner.finish_and_clear();
-        reports.push(report);
-    }
+    let running = std::sync::Mutex::new(chosen.iter().map(|t| t.name()).collect::<Vec<_>>());
+    let spinner = ui::spinner(&running.lock().expect("never poisoned").join(", "));
+    let results: Vec<Result<Report>> = std::thread::scope(|s| {
+        let handles: Vec<_> = chosen
+            .iter()
+            .map(|target| {
+                let (running, spinner) = (&running, &spinner);
+                s.spawn(move || {
+                    let report = target.scan(cfg);
+                    let mut left = running.lock().expect("never poisoned");
+                    left.retain(|name| *name != target.name());
+                    spinner.set_message(left.join(", "));
+                    report
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("a target panicked"))
+            .collect()
+    });
+    spinner.finish_and_clear();
+
+    let mut reports = results.into_iter().collect::<Result<Vec<_>>>()?;
     crate::report::dedupe(&mut reports);
     Ok(reports)
 }
