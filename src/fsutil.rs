@@ -294,6 +294,87 @@ fn is_protected(path: &Path, roots: &[PathBuf]) -> bool {
     })
 }
 
+/// Folders of the home directory that hold everything else. Removing one is
+/// never cleanup, whatever a detector or a stray tick says.
+const HOME_FOLDERS: &[&str] = &[
+    "Desktop",
+    "Documents",
+    "Downloads",
+    "Pictures",
+    "Movies",
+    "Music",
+    "Public",
+    "Library",
+    "Applications",
+];
+
+/// Where apps keep what can't be rebuilt or downloaded again: messages, mail,
+/// keys and passwords, synced files. Neither they nor anything inside them is
+/// removed file by file — the app owning them manages that.
+const PERSONAL_STORES: &[&str] = &[
+    "Library/Messages",
+    "Library/Mail",
+    "Library/Keychains",
+    "Library/Photos",
+    "Library/Calendars",
+    "Library/Application Support/AddressBook",
+    "Library/Containers/com.apple.mail",
+    ".ssh",
+    ".gnupg",
+];
+
+/// Synced and cloud-backed folders: removing one deletes it on every device.
+const SYNCED_ROOTS: &[&str] = &["Library/Mobile Documents", "Library/CloudStorage"];
+
+/// Library packages whose contents only their app may touch.
+const LIBRARY_BUNDLES: &[&str] = &[
+    ".photoslibrary",
+    ".musiclibrary",
+    ".tvlibrary",
+    ".aplibrary",
+    ".fcpbundle",
+    ".imovielibrary",
+    ".lrlibrary",
+];
+
+/// Why removing `path` would lose something no cleanup should, or `None` when
+/// it wouldn't. Checked on every removal, as the last word after any detector.
+pub fn irreplaceable(path: &Path, home: &Path) -> Option<&'static str> {
+    if home.starts_with(path) {
+        return Some("it holds your home folder");
+    }
+    if HOME_FOLDERS.iter().any(|f| path == home.join(f)) {
+        return Some("it is one of your home folders");
+    }
+    if SYNCED_ROOTS.iter().any(|r| home.join(r).starts_with(path)) {
+        return Some("it holds your synced files");
+    }
+    if PERSONAL_STORES
+        .iter()
+        .any(|s| home.join(s).starts_with(path))
+    {
+        return Some("it holds data only its app can manage");
+    }
+    app_managed(path, home)
+}
+
+/// Whether `path` is or sits inside data only its app may manage: a personal
+/// store like Messages, or a media library package.
+pub fn app_managed(path: &Path, home: &Path) -> Option<&'static str> {
+    if PERSONAL_STORES
+        .iter()
+        .any(|s| path.starts_with(home.join(s)))
+    {
+        return Some("it holds data only its app can manage");
+    }
+    let in_library = path.ancestors().any(|p| {
+        p.file_name()
+            .map(|n| n.to_string_lossy())
+            .is_some_and(|n| LIBRARY_BUNDLES.iter().any(|ext| n.ends_with(ext)))
+    });
+    in_library.then_some("it is part of a media library")
+}
+
 /// Remove a path. By default it moves to the Trash so a mistake is recoverable
 /// with Finder's "Put Back"; `purge` deletes it outright to reclaim space now.
 /// A move to the Trash returns what it moved, so the caller can later offer to
@@ -307,6 +388,9 @@ pub fn remove_path(path: &Path, purge: bool) -> Result<Option<TrashId>> {
             "refusing to remove protected toolchain path {}",
             path.display()
         );
+    }
+    if let Some(why) = dirs::home_dir().and_then(|home| irreplaceable(path, &home)) {
+        bail!("refusing to remove {}: {why}", path.display());
     }
     if purge {
         hard_remove(path, &meta)?;
@@ -1350,5 +1434,34 @@ pub(crate) mod tests {
             &cargo
         ));
         assert!(is_protected(Path::new("/Users/x/.cargo/bin"), &cargo));
+    }
+
+    #[test]
+    fn what_cant_be_rebuilt_is_never_removed() {
+        let home = Path::new("/Users/x");
+        for path in [
+            "/Users",
+            "/Users/x",
+            "/Users/x/Documents",
+            "/Users/x/Library",
+            "/Users/x/Library/Messages",
+            "/Users/x/Library/Messages/Attachments/ab/photo.heic",
+            "/Users/x/Library/Mail/V10",
+            "/Users/x/Library/Mobile Documents",
+            "/Users/x/Library/CloudStorage",
+            "/Users/x/Pictures/Photos Library.photoslibrary",
+            "/Users/x/Pictures/Photos Library.photoslibrary/originals/0",
+            "/Users/x/.ssh",
+        ] {
+            assert!(irreplaceable(Path::new(path), home).is_some(), "{path}");
+        }
+        for path in [
+            "/Users/x/Library/Caches/com.app",
+            "/Users/x/Documents/old-export.zip",
+            "/Users/x/Library/CloudStorage/Dropbox/big.mov",
+            "/Users/x/code/app/node_modules",
+        ] {
+            assert!(irreplaceable(Path::new(path), home).is_none(), "{path}");
+        }
     }
 }

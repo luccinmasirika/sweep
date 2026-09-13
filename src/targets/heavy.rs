@@ -59,7 +59,13 @@ struct Scan<'a> {
     /// reported here, so the same gigabytes aren't listed twice.
     covered: HashSet<&'a str>,
     covered_roots: Vec<PathBuf>,
+    /// Where the `projects` walk never looks, so a build dir name there is
+    /// just a folder name.
+    unwalked: Vec<PathBuf>,
     exclude: Vec<PathBuf>,
+    home: PathBuf,
+    /// Files with more than one link, so each is weighed once.
+    linked: HashSet<(u64, u64)>,
     found: Vec<Finding>,
     unreadable: Vec<PathBuf>,
 }
@@ -135,7 +141,10 @@ impl<'a> Scan<'a> {
             stale_after: Duration::from_secs(cfg.downloads_stale_days * 86_400),
             covered,
             covered_roots: crate::catalog::covered_roots(&cfg.home),
+            unwalked: cfg.prune_prefixes(),
             exclude: cfg.exclude.clone(),
+            home: cfg.home.clone(),
+            linked: HashSet::new(),
             found: Vec::new(),
             unreadable: Vec::new(),
         }
@@ -169,6 +178,9 @@ impl<'a> Scan<'a> {
             }
 
             if meta.is_file() {
+                if meta.nlink() > 1 && !self.linked.insert((meta.dev(), meta.ino())) {
+                    continue;
+                }
                 let size = meta.blocks() * 512;
                 total += size;
                 if size >= self.min {
@@ -181,10 +193,21 @@ impl<'a> Scan<'a> {
             }
 
             let name = entry.file_name().to_string_lossy().into_owned();
-            if self.covered.contains(name.as_str()) || self.is_covered_root(&path) {
+            // What another target lists, and what nobody should be offered to
+            // delete, weigh on their parents without being named here.
+            if self.is_covered(&path, &name, depth) {
                 let size = fsutil::dir_size(&path);
                 total += size;
                 owned_elsewhere += size;
+                continue;
+            }
+            if fsutil::app_managed(&path, &self.home).is_some() || self.is_synced(&path) {
+                let usage = fsutil::dir_usage(&path);
+                if usage.unreadable {
+                    self.unreadable.push(path.clone());
+                }
+                total += usage.bytes;
+                owned_elsewhere += usage.bytes;
                 continue;
             }
 
@@ -212,7 +235,9 @@ impl<'a> Scan<'a> {
             total += size;
         }
 
-        if depth > 0 && !is_bucket(dir, home) {
+        // A folder right under home — `~/Developer`, `~/Projects` — is where a
+        // person keeps many things, never one thing to throw away.
+        if depth > 1 && !is_bucket(dir, home) {
             // Nothing heavy inside, but the folder itself is heavy: it is the
             // item, as long as the weight isn't really a build dir we skipped.
             if !reported && heavy.is_empty() && total.saturating_sub(owned_elsewhere) >= self.min {
@@ -242,9 +267,33 @@ impl<'a> Scan<'a> {
         }
     }
 
-    fn is_covered_root(&self, path: &Path) -> bool {
-        self.covered_roots.iter().any(|r| path == r)
+    /// Whether another target already reports `path`: one of its exact paths,
+    /// or a build or cache folder where that target would find it. A folder
+    /// named `target` it wouldn't take is only a folder, and stays visible.
+    fn is_covered(&self, path: &Path, name: &str, depth: usize) -> bool {
+        if self.covered_roots.iter().any(|r| path == r)
             || self.exclude.iter().any(|e| path.starts_with(e))
+        {
+            return true;
+        }
+        if !self.covered.contains(name) || depth == 0 {
+            return false;
+        }
+        if CACHE_NAMES.contains(&name) {
+            let lib = self.home.join("Library");
+            return [lib.join("Application Support"), lib.join("Containers")]
+                .iter()
+                .any(|root| path.starts_with(root) && path.parent() != Some(root.as_path()));
+        }
+        !self.unwalked.iter().any(|p| path.starts_with(p)) && super::vouched(path, name)
+    }
+
+    /// Anything under iCloud Drive or a cloud provider: deleting it there
+    /// deletes it everywhere, which is not reclaiming space.
+    fn is_synced(&self, path: &Path) -> bool {
+        ["Library/Mobile Documents", "Library/CloudStorage"]
+            .iter()
+            .any(|r| path.starts_with(self.home.join(r)))
     }
 
     fn weigh(&self, path: PathBuf, size: u64, meta: &fs::Metadata) -> Weight {
@@ -372,16 +421,62 @@ mod tests {
     #[test]
     fn a_bundle_is_one_item() {
         let home = tempfile::tempdir().unwrap();
-        let lib = home
-            .path()
-            .join("Pictures/Photos Library.photoslibrary/originals");
-        fs::create_dir_all(&lib).unwrap();
-        fs::write(lib.join("IMG_0001.heic"), vec![0u8; 200_000]).unwrap();
+        let resources = home.path().join("Tools/Renderer.app/Contents/Resources");
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(resources.join("model.bin"), vec![0u8; 200_000]).unwrap();
 
         let found = scan(home.path(), 100_000);
 
         assert_eq!(found.len(), 1);
-        assert!(found[0].path.ends_with("Photos Library.photoslibrary"));
+        assert!(found[0].path.ends_with("Renderer.app"));
+    }
+
+    #[test]
+    fn irreplaceable_data_is_never_offered() {
+        let home = tempfile::tempdir().unwrap();
+        for dir in [
+            "Pictures/Photos Library.photoslibrary/originals",
+            "Library/Messages/Attachments",
+            "Library/Mobile Documents/com~apple~CloudDocs/Film",
+        ] {
+            let dir = home.path().join(dir);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("data"), vec![0u8; 200_000]).unwrap();
+        }
+        // Many small repos: heavy together, but nothing to delete as one.
+        for repo in ["a", "b", "c"] {
+            let src = home.path().join("Developer").join(repo);
+            fs::create_dir_all(&src).unwrap();
+            fs::write(src.join("main.rs"), vec![0u8; 40_000]).unwrap();
+        }
+
+        assert!(scan(home.path(), 100_000).is_empty());
+    }
+
+    #[test]
+    fn hard_links_weigh_once() {
+        let home = tempfile::tempdir().unwrap();
+        let store = home.path().join("Library/Application Support/Chat/media");
+        fs::create_dir_all(&store).unwrap();
+        fs::write(store.join("a"), vec![0u8; 60_000]).unwrap();
+        fs::hard_link(store.join("a"), store.join("b")).unwrap();
+
+        // 60 KB once, not 120 KB twice.
+        assert!(scan(home.path(), 100_000).is_empty());
+    }
+
+    #[test]
+    fn a_folder_named_like_build_output_is_still_weighed() {
+        let home = tempfile::tempdir().unwrap();
+        // No Cargo.toml: `projects` won't take it, so it mustn't vanish here.
+        let target = home.path().join("Documents/Marketing/target");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("campaign.mov"), vec![0u8; 200_000]).unwrap();
+
+        let found = scan(home.path(), 100_000);
+
+        assert_eq!(found.len(), 1);
+        assert!(found[0].path.starts_with(&target));
     }
 
     #[test]

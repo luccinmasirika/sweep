@@ -46,48 +46,42 @@ fn resolve(home: &Path, entries: &[Entry]) -> Vec<Finding> {
     out
 }
 
-/// Prefixes another target already reports on. The name-agnostic scan counts
-/// them towards a folder's weight but never lists them itself, so the same
-/// gigabytes never show up under two headings.
+/// The exact folders another target already reports. The name-agnostic scan
+/// counts them towards a folder's weight but never lists them itself, so the
+/// same gigabytes never show up under two headings. Only the folders
+/// themselves: the simulators, sources and model files next to them are
+/// nobody else's, and stay visible.
 pub fn covered_roots(home: &Path) -> Vec<std::path::PathBuf> {
-    [
+    let mut rels = vec![
         // system-caches, privacy
         "Library/Caches",
         "Library/Logs",
         ".Trash",
         // xcode
-        "Library/Developer",
-        "Library/Application Support/MobileSync",
+        "Library/Developer/Xcode/DerivedData",
+        "Library/Developer/Xcode/iOS DeviceSupport",
+        "Library/Developer/Xcode/Archives",
+        "Library/Developer/CoreSimulator/Caches",
+        "Library/Application Support/MobileSync/Backup",
         // dev-tools
-        "Library/pnpm",
-        "Library/Android",
-        ".npm",
-        ".cargo",
-        ".m2",
-        ".gradle",
-        ".pub-cache",
-        ".nuget",
-        ".bun",
-        ".deno",
+        "Library/pnpm/store",
+        ".npm/_cacache",
+        ".cargo/registry/cache",
+        ".bun/install/cache",
         "go/pkg/mod",
+        ".m2/repository",
+        ".gradle/caches",
+        ".pub-cache/hosted",
+        ".pub-cache/git/cache",
+        ".nuget/packages",
+        ".cache/puppeteer",
+        "Library/Android/sdk/system-images",
         // applications
         "Applications",
-        // vm-images
-        ".colima",
-        ".lima",
-        ".orbstack",
-        "OrbStack",
-        ".rd",
-        ".docker",
-        "Library/Containers/com.docker.docker",
-        "Library/Containers/com.utmapp.UTM",
-        "Parallels",
-        "VirtualBox VMs",
-        "Virtual Machines.localized",
-    ]
-    .iter()
-    .map(|rel| home.join(rel))
-    .collect()
+    ];
+    // vm-images
+    rels.extend(crate::targets::vm_images::RUNTIMES.iter().map(|rt| rt.rel));
+    rels.into_iter().map(|rel| home.join(rel)).collect()
 }
 
 pub fn system_caches(cfg: &Config) -> Vec<Finding> {
@@ -142,10 +136,17 @@ pub fn dev_caches(home: &Path) -> Vec<Finding> {
                 note: Some("gradle caches"),
                 risky: false,
             },
+            // Only the downloads: `.pub-cache/bin` holds globally activated tools.
             Entry {
-                rel: ".pub-cache",
+                rel: ".pub-cache/hosted",
                 action: Action::Empty,
                 note: Some("dart/flutter pub cache"),
+                risky: false,
+            },
+            Entry {
+                rel: ".pub-cache/git/cache",
+                action: Action::Empty,
+                note: Some("dart/flutter git dependencies"),
                 risky: false,
             },
             Entry {
