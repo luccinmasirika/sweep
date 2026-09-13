@@ -85,7 +85,7 @@ pub enum Command {
     },
     /// Run macOS housekeeping (flush DNS, rebuild Spotlight, reset Launch Services…)
     Maintenance {
-        /// Run every task without prompting
+        /// Run the routine tasks without prompting (not the Spotlight rebuild or Launch Services reset)
         #[arg(long)]
         fix: bool,
     },

@@ -8,6 +8,9 @@ const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Vers
 pub(crate) struct Task {
     pub label: &'static str,
     cmds: &'static [&'static [&'static str]],
+    /// Ticked in the menu and run by `--fix`. The heavy-handed ones aren't:
+    /// they fix a specific problem and cost something when there isn't one.
+    routine: bool,
 }
 
 /// macOS housekeeping that frees nothing but keeps the system healthy. Several
@@ -19,20 +22,24 @@ const TASKS: &[Task] = &[
             &["dscacheutil", "-flushcache"],
             &["killall", "-HUP", "mDNSResponder"],
         ],
+        routine: true,
     },
     Task {
-        label: "Rebuild the Spotlight index",
+        label: "Rebuild the Spotlight index (only if search is broken — takes hours)",
         cmds: &[&["mdutil", "-E", "/"]],
+        routine: false,
     },
     Task {
-        label: "Reset Launch Services (fix duplicate \"Open With\" entries)",
+        label: "Reset Launch Services (fix duplicate \"Open With\" entries — resets default apps)",
         cmds: &[&[
             LSREGISTER, "-kill", "-r", "-domain", "local", "-domain", "system", "-domain", "user",
         ]],
+        routine: false,
     },
     Task {
         label: "Run the periodic maintenance scripts",
         cmds: &[&["periodic", "daily", "weekly", "monthly"]],
+        routine: true,
     },
 ];
 
@@ -41,10 +48,10 @@ pub fn run(fix: bool) -> Result<u32> {
         anyhow::bail!("no terminal to choose tasks in — pass --fix to run them unattended");
     }
     let chosen: Vec<&Task> = if fix {
-        TASKS.iter().collect()
+        TASKS.iter().filter(|t| t.routine).collect()
     } else {
         let labels: Vec<&str> = TASKS.iter().map(|t| t.label).collect();
-        let defaults = vec![true; TASKS.len()];
+        let defaults: Vec<bool> = TASKS.iter().map(|t| t.routine).collect();
         println!("  space to tick · enter to run");
         let picks = dialoguer::MultiSelect::with_theme(&ui::menu_theme())
             .with_prompt("Maintenance tasks")
