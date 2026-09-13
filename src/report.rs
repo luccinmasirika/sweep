@@ -179,7 +179,9 @@ pub struct Applied {
 /// hold an app cache — so each nested path belongs to the finding that names it
 /// most precisely. The finding around it loses those bytes from its size and,
 /// when emptied, leaves the path in place, so unticking the specific item
-/// really keeps it. A path reported twice keeps its first finding.
+/// really keeps it. A path reported twice keeps its first finding, carrying
+/// over the more careful flags of the other: personal if either says so, idle
+/// only if both agree.
 pub fn dedupe(reports: &mut [Report]) {
     let places: Vec<(usize, usize, Vec<PathBuf>, u64)> = reports
         .iter()
@@ -206,7 +208,7 @@ pub fn dedupe(reports: &mut [Report]) {
             for path in inner {
                 if outer.contains(path) {
                     if j > i && inner.len() == 1 && outer.len() == 1 {
-                        duplicates.push((places[j].0, places[j].1));
+                        duplicates.push(((places[j].0, places[j].1), (*r, *f)));
                     }
                 } else if outer.iter().any(|o| path.starts_with(o))
                     && !inside.iter().any(|(p, _)| p == path)
@@ -237,8 +239,17 @@ pub fn dedupe(reports: &mut [Report]) {
     }
 
     duplicates.sort_unstable();
-    duplicates.dedup();
-    for (r, f) in duplicates.into_iter().rev() {
+    duplicates.dedup_by_key(|(dup, _)| *dup);
+    for &((r, f), (kr, kf)) in &duplicates {
+        let (risky, stale) = {
+            let dup = &reports[r].findings[f];
+            (dup.risky, dup.stale)
+        };
+        let kept = &mut reports[kr].findings[kf];
+        kept.risky |= risky;
+        kept.stale &= stale;
+    }
+    for ((r, f), _) in duplicates.into_iter().rev() {
         reports[r].findings.remove(f);
     }
 }
@@ -498,6 +509,32 @@ mod tests {
         assert!(reports[2].findings.is_empty(), "the duplicate goes");
         let total: u64 = reports.iter().map(|r| r.total_size()).sum();
         assert_eq!(total, 1_000, "every byte once");
+    }
+
+    #[test]
+    fn a_path_reported_twice_stays_personal_if_either_says_so() {
+        let folder = PathBuf::from("/Users/me/Documents/target");
+        let mut reports = vec![
+            Report {
+                target: "projects".into(),
+                findings: vec![Finding::dir(folder.clone(), 900, CleanAction::RemovePath)],
+                unreadable: Vec::new(),
+            },
+            Report {
+                target: "large-items".into(),
+                findings: vec![Finding::dir(folder.clone(), 900, CleanAction::RemovePath)
+                    .risky(true)
+                    .stale(false)],
+                unreadable: Vec::new(),
+            },
+        ];
+
+        dedupe(&mut reports);
+
+        let kept = &reports[0].findings[0];
+        assert!(kept.risky && !kept.stale);
+        assert!(!kept.auto(), "`--yes` must not take a personal folder");
+        assert!(reports[1].findings.is_empty());
     }
 
     #[test]
