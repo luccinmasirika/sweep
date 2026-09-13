@@ -275,6 +275,20 @@ pub(crate) fn is_bundle(name: &str) -> bool {
         ".musiclibrary",
         ".tvlibrary",
         ".aplibrary",
+        ".fcpbundle",
+        ".imovielibrary",
+        ".logicx",
+        ".band",
+        ".lrlibrary",
+        ".sparsebundle",
+        ".xcarchive",
+        ".dSYM",
+        ".mlpackage",
+        ".pages",
+        ".numbers",
+        ".key",
+        ".rtfd",
+        ".docarchive",
     ];
     EXTS.iter().any(|ext| name.ends_with(ext))
 }
