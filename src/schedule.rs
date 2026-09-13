@@ -39,20 +39,44 @@ fn plist_path() -> Result<PathBuf> {
         .join(format!("{LABEL}.plist")))
 }
 
+/// The per-user launchd domain the agent lives in.
+fn domain() -> String {
+    // SAFETY: getuid has no preconditions and cannot fail.
+    format!("gui/{}", unsafe { libc::getuid() })
+}
+
 fn install(interval: Interval) -> Result<u32> {
     let exe = std::env::current_exe().context("locating the sweep binary")?;
     let path = plist_path()?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).ok();
     }
-    std::fs::write(&path, plist(&exe.to_string_lossy(), interval))
-        .with_context(|| format!("writing {}", path.display()))?;
+    let log = dirs::home_dir()
+        .context("no home directory")?
+        .join("Library/Application Support/sweep/schedule.log");
+    if let Some(dir) = log.parent() {
+        std::fs::create_dir_all(dir).ok();
+    }
+    std::fs::write(
+        &path,
+        plist(
+            &exe.to_string_lossy(),
+            &user_path(),
+            &log.to_string_lossy(),
+            interval,
+        ),
+    )
+    .with_context(|| format!("writing {}", path.display()))?;
 
     // Reload so a changed schedule takes effect.
+    let _ = exec::run(&[
+        "launchctl".into(),
+        "bootout".into(),
+        format!("{}/{LABEL}", domain()),
+    ]);
     let p = path.to_string_lossy().into_owned();
-    let _ = exec::run(&["launchctl".into(), "unload".into(), p.clone()]);
-    if let Err(e) = exec::run(&["launchctl".into(), "load".into(), "-w".into(), p]) {
-        ui::warn(&format!("launchctl load: {e}"));
+    if let Err(e) = exec::run(&["launchctl".into(), "bootstrap".into(), domain(), p]) {
+        ui::warn(&format!("launchctl bootstrap: {e}"));
         return Ok(1);
     }
     ui::ok(&format!(
@@ -70,8 +94,8 @@ fn remove() -> Result<u32> {
     }
     let _ = exec::run(&[
         "launchctl".into(),
-        "unload".into(),
-        path.to_string_lossy().into_owned(),
+        "bootout".into(),
+        format!("{}/{LABEL}", domain()),
     ]);
     std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
     ui::ok("schedule removed");
@@ -84,15 +108,35 @@ fn status() -> Result<u32> {
         println!("Not scheduled.");
         return Ok(0);
     }
-    let loaded = exec::capture(&["launchctl".into(), "list".into()])
-        .map(|out| out.contains(LABEL))
-        .unwrap_or(false);
+    let loaded = exec::capture(&[
+        "launchctl".into(),
+        "print".into(),
+        format!("{}/{LABEL}", domain()),
+    ])
+    .is_ok_and(|out| out.contains(LABEL));
     println!(
         "Scheduled at {} ({}).",
         path.display(),
         if loaded { "loaded" } else { "not loaded" }
     );
     Ok(0)
+}
+
+/// The `PATH` of the terminal `schedule install` runs in. launchd starts agents
+/// with only `/usr/bin:/bin:/usr/sbin:/sbin`, where brew, npm, docker and the
+/// rest aren't found — nor are the toolchains a clean must never touch, so a
+/// scheduled run would lose the very check that protects them.
+fn user_path() -> String {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let dirs: Vec<String> = std::env::split_paths(&path)
+        .filter(|d| d.is_absolute())
+        .map(|d| d.to_string_lossy().into_owned())
+        .collect();
+    if dirs.is_empty() {
+        "/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+    } else {
+        dirs.join(":")
+    }
 }
 
 fn interval_label(interval: Interval) -> &'static str {
@@ -115,7 +159,15 @@ fn calendar(interval: Interval) -> String {
     keys
 }
 
-fn plist(exe: &str, interval: Interval) -> String {
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// A background agent: low CPU and I/O priority so a clean that fires while
+/// someone is working doesn't get in their way, and its errors kept in a log.
+fn plist(exe: &str, path: &str, log: &str, interval: Interval) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -129,13 +181,57 @@ fn plist(exe: &str, interval: Interval) -> String {
         <string>smart</string>
         <string>--yes</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{path}</string>
+    </dict>
     <key>StartCalendarInterval</key>
     <dict>{cal}</dict>
     <key>RunAtLoad</key>
     <false/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>{log}</string>
+    <key>StandardErrorPath</key>
+    <string>{log}</string>
 </dict>
 </plist>
 "#,
+        exe = xml_escape(exe),
+        path = xml_escape(path),
+        log = xml_escape(log),
         cal = calendar(interval)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_agent_runs_with_the_users_path_in_the_background() {
+        let plist = plist(
+            "/opt/homebrew/bin/sweep",
+            "/Users/me/.nvm/versions/node/v20/bin:/opt/homebrew/bin:/usr/bin",
+            "/Users/me/Library/Application Support/sweep/schedule.log",
+            Interval::Weekly,
+        );
+        assert!(plist.contains(
+            "<key>PATH</key>\n        <string>/Users/me/.nvm/versions/node/v20/bin:/opt/homebrew/bin:/usr/bin</string>"
+        ));
+        assert!(plist.contains("<string>Background</string>"));
+        assert!(plist.contains("<key>LowPriorityIO</key>\n    <true/>"));
+        assert!(plist.contains("<key>Weekday</key>"));
+    }
+
+    #[test]
+    fn paths_are_escaped_for_the_plist() {
+        assert_eq!(xml_escape("/Users/R&D/<bin>"), "/Users/R&amp;D/&lt;bin&gt;");
+    }
 }
