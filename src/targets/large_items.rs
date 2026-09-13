@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
@@ -48,7 +49,7 @@ impl Target for LargeItems {
                     fsutil::dir_usage(&path)
                 } else {
                     fsutil::Usage {
-                        bytes: meta.len(),
+                        bytes: meta.blocks() * 512,
                         unreadable: false,
                     }
                 };

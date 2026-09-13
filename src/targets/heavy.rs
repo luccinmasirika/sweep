@@ -127,6 +127,9 @@ fn is_bucket(path: &Path, home: &Path) -> bool {
         "Music",
         "Pictures",
         "Applications",
+        ".cache",
+        ".config",
+        ".local/share",
     ];
     BUCKETS.iter().any(|b| path == home.join(b))
 }
@@ -193,14 +196,15 @@ impl<'a> Scan<'a> {
             }
 
             let name = entry.file_name().to_string_lossy().into_owned();
-            // What another target lists, and what nobody should be offered to
-            // delete, weigh on their parents without being named here.
+            // What another target lists weighs on its parents without being
+            // named here.
             if self.is_covered(&path, &name, depth) {
                 let size = fsutil::dir_size(&path);
                 total += size;
                 owned_elsewhere += size;
                 continue;
             }
+            // So does what nobody should be offered to delete.
             if fsutil::app_managed(&path, &self.home).is_some() || self.is_synced(&path) {
                 let usage = fsutil::dir_usage(&path);
                 if usage.unreadable {
