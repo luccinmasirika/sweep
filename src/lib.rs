@@ -1,5 +1,4 @@
 pub mod apps;
-#[cfg(target_os = "macos")]
 pub mod bulk;
 pub mod catalog;
 pub mod cli;

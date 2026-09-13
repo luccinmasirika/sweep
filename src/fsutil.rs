@@ -7,8 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
-#[cfg(not(target_os = "macos"))]
-use jwalk::WalkDirGeneric;
 use serde::Serialize;
 
 /// How much of a path could be measured. macOS answers a Full Disk Access
@@ -54,57 +52,8 @@ pub fn dir_size(path: &Path) -> u64 {
 /// The walk stays on the volume it starts on. Another disk mounted inside the
 /// tree is not part of this folder's weight, and a network share mounted in a
 /// home folder would otherwise stall the whole scan.
-#[cfg(target_os = "macos")]
 pub fn dir_usage(path: &Path) -> Usage {
     crate::bulk::usage(path)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn dir_usage(path: &Path) -> Usage {
-    let root_dev = fs::symlink_metadata(path).map(|m| m.dev()).ok();
-    let walk = WalkDirGeneric::<((), Option<FileBlocks>)>::new(path)
-        .follow_links(false)
-        // jwalk skips dotfiles unless told otherwise, which silently leaves out
-        // `.git`, `.next`, a pnpm `node_modules/.pnpm` — often most of the bytes.
-        .skip_hidden(false)
-        .process_read_dir(move |_depth, _path, _state, children| {
-            for child in children.iter_mut().flatten() {
-                let file_type = child.file_type();
-                if file_type.is_file() {
-                    child.client_state = file_blocks(&child.path());
-                } else if file_type.is_dir()
-                    && root_dev.is_some_and(|dev| {
-                        fs::symlink_metadata(child.path()).is_ok_and(|m| m.dev() != dev)
-                    })
-                {
-                    child.read_children_path = None;
-                }
-            }
-        });
-
-    let mut tally = Tally::default();
-    let mut unreadable = false;
-    for entry in walk {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                unreadable |= is_denied(&e);
-                continue;
-            }
-        };
-        // jwalk hands back a directory it couldn't list as a normal entry,
-        // with the refusal tucked inside it.
-        if let Some(e) = &entry.read_children_error {
-            unreadable |= is_denied(e);
-        }
-        if let Some(file) = entry.client_state {
-            tally.add(file);
-        }
-    }
-    Usage {
-        bytes: tally.bytes(),
-        unreadable,
-    }
 }
 
 /// On-disk bytes of these files taken together: a file linked twice counts
@@ -320,12 +269,6 @@ impl<'a> AttrReader<'a> {
     pub(crate) fn u64(&mut self) -> Option<u64> {
         self.take().map(u64::from_ne_bytes)
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn is_denied(e: &jwalk::Error) -> bool {
-    e.io_error()
-        .is_some_and(|io| io.kind() == io::ErrorKind::PermissionDenied)
 }
 
 /// Install prefixes of language toolchains found on `PATH` (e.g. the Node
