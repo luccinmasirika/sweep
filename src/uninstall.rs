@@ -26,11 +26,21 @@ pub fn run(queries: Vec<String>, json: bool, purge: bool) -> Result<u32> {
         }
         picked
     };
+    if let Some(app) = targets.iter().find(|a| apps::is_system_app(a)) {
+        bail!(
+            "{} comes with macOS and can't be uninstalled — its data is yours, not a leftover",
+            app.name
+        );
+    }
+    if !json && !interactive() {
+        bail!("no terminal to confirm in — run `sweep uninstall` from a terminal, or --json to list the footprint");
+    }
 
+    let ids: Vec<&str> = installed.iter().map(|a| a.id.as_str()).collect();
     let mut failures = 0;
     let mut trash = fsutil::TrashLog::default();
     for app in targets {
-        let footprint = footprint(&app);
+        let footprint = footprint(&app, &ids);
         if json {
             ui::print_json(&to_json(&app, &footprint))?;
             continue;
@@ -76,7 +86,10 @@ fn clone_app(a: &App) -> App {
 }
 
 fn pick_app(installed: &[App]) -> Result<App> {
-    let mut apps: Vec<&App> = installed.iter().collect();
+    let mut apps: Vec<&App> = installed
+        .iter()
+        .filter(|a| !apps::is_system_app(a))
+        .collect();
     apps.sort_by(|a, b| {
         a.name
             .to_ascii_lowercase()
@@ -91,8 +104,9 @@ fn pick_app(installed: &[App]) -> Result<App> {
     Ok(clone_app(apps[sel]))
 }
 
-/// The app bundle plus every per-id support file and launch agent.
-pub(crate) fn footprint(app: &App) -> Vec<PathBuf> {
+/// The app bundle plus every per-id support file and launch agent. `installed`
+/// are the ids of every installed app, so a sibling's data stays with it.
+pub(crate) fn footprint(app: &App, installed: &[&str]) -> Vec<PathBuf> {
     let mut paths = vec![app.path.clone()];
     let Some(home) = dirs::home_dir() else {
         return paths;
@@ -104,7 +118,8 @@ pub(crate) fn footprint(app: &App) -> Vec<PathBuf> {
         };
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if apps::candidate_id(&name).is_some_and(|id| apps::ids_related(&id, &app.id)) {
+            if apps::candidate_id(&name).is_some_and(|id| apps::belongs_to(&id, &app.id, installed))
+            {
                 paths.push(entry.path());
             }
         }
@@ -117,7 +132,8 @@ pub(crate) fn footprint(app: &App) -> Vec<PathBuf> {
         };
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if apps::candidate_id(&name).is_some_and(|id| apps::ids_related(&id, &app.id)) {
+            if apps::candidate_id(&name).is_some_and(|id| apps::belongs_to(&id, &app.id, installed))
+            {
                 paths.push(entry.path());
             }
         }
@@ -178,6 +194,15 @@ fn uninstall_one(
                 failures += 1;
                 journal::record("failed", p, size, Some(&format!("{e:#}")));
                 ui::warn(&format!("{}: {e}", ui::pretty_path(p)));
+                // The app is still there and still needs its data: taking the
+                // rest would only break it.
+                if p == &app.path {
+                    ui::warn(&format!(
+                        "{} couldn't be removed, so its data was left in place",
+                        app.name
+                    ));
+                    return Ok(failures);
+                }
             }
         }
     }
