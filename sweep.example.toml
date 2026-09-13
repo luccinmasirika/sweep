@@ -25,7 +25,7 @@ exclude = []
 
 # Regenerable build/dependency directory names the `projects` scan deletes.
 # Defaults are safe; add "dist", "build" or "out" only if those are output dirs
-# in your projects.
+# in your projects. A folder git tracks is never matched, whatever its name.
 project_dir_names = [
     "node_modules", "target", ".next", ".nuxt", ".svelte-kit",
     ".turbo", ".parcel-cache", ".gradle", "Pods", "venv", ".venv",

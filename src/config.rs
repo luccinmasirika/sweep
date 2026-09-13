@@ -110,7 +110,6 @@ fn default_project_dir_names() -> Vec<String> {
         "zig-cache",
         ".zig-cache",
         ".swiftpm",
-        ".ipynb_checkpoints",
         ".pixi",
     ]
     .iter()
@@ -136,8 +135,20 @@ fn default_prune_dirs() -> &'static [&'static str] {
         ".deno",
         ".gem",
         "go",
-        ".local/share/fnm",
-        ".local/share/mise",
+        ".local/share",
+        ".config",
+        ".cache",
+        ".m2",
+        ".gradle",
+        // Editors ship their extensions with `node_modules` and `venv` inside,
+        // dated the day they were installed.
+        ".vscode",
+        ".vscode-insiders",
+        ".vscode-oss",
+        ".cursor",
+        ".windsurf",
+        ".antigravity",
+        ".kiro",
     ]
 }
 
