@@ -215,6 +215,24 @@ pub fn ids_related(id: &str, other: &str) -> bool {
     id == other || id.starts_with(&format!("{other}.")) || other.starts_with(&format!("{id}."))
 }
 
+/// Whether the data named `id` is `app`'s to take along when it's uninstalled:
+/// the app itself or one of its helpers, and not the closer match of another
+/// installed app. `com.google.chrome.canary` shares Chrome's prefix but is its
+/// own app, and Chrome Canary's parent id is stable Chrome's.
+pub fn belongs_to(id: &str, app: &str, installed: &[&str]) -> bool {
+    let within = |owner: &str| id == owner || id.starts_with(&format!("{owner}."));
+    within(app)
+        && !installed
+            .iter()
+            .any(|other| *other != app && other.len() > app.len() && within(other))
+}
+
+/// Apps that ship with macOS. Their data is the user's mail, notes and photos,
+/// and SIP keeps the bundle anyway, so they are never uninstalled.
+pub fn is_system_app(app: &App) -> bool {
+    app.id.starts_with("com.apple.") || app.path.starts_with("/System")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +261,37 @@ mod tests {
         assert!(ids_related("com.acme.editor.helper", "com.acme.editor"));
         assert!(ids_related("com.acme.editor", "com.acme.editor.helper"));
         assert!(!ids_related("com.gone.app", "com.acme.editor"));
+    }
+
+    #[test]
+    fn a_sibling_apps_data_is_not_part_of_an_uninstall() {
+        let installed = ["com.google.chrome", "com.google.chrome.canary"];
+        // Uninstalling Canary leaves stable Chrome's data alone…
+        assert!(!belongs_to(
+            "com.google.chrome",
+            "com.google.chrome.canary",
+            &installed
+        ));
+        assert!(belongs_to(
+            "com.google.chrome.canary.helper",
+            "com.google.chrome.canary",
+            &installed
+        ));
+        // …and uninstalling Chrome leaves Canary's.
+        assert!(belongs_to(
+            "com.google.chrome.helper",
+            "com.google.chrome",
+            &installed
+        ));
+        assert!(!belongs_to(
+            "com.google.chrome.canary",
+            "com.google.chrome",
+            &installed
+        ));
+        assert!(!belongs_to(
+            "com.google.chrome.canary.helper",
+            "com.google.chrome",
+            &installed
+        ));
     }
 }

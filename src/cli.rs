@@ -79,13 +79,13 @@ pub enum Command {
     },
     /// Diagnose where disk space is going, and optionally reclaim it
     Doctor {
-        /// Reclaim non-interactively: delete APFS local snapshots, empty the Trash
+        /// Reclaim non-interactively: delete update snapshots, empty the Trash (Time Machine snapshots still ask)
         #[arg(long)]
         fix: bool,
     },
     /// Run macOS housekeeping (flush DNS, rebuild Spotlight, reset Launch Services…)
     Maintenance {
-        /// Run every task without prompting
+        /// Run the routine tasks without prompting (not the Spotlight rebuild or Launch Services reset)
         #[arg(long)]
         fix: bool,
     },
@@ -166,12 +166,16 @@ pub fn run_clean(
     cfg.prune_volumes = volumes;
 
     if dry_run {
-        print_plan(&collect(&cfg, only)?, purge);
+        print_plan(&collect(&cfg, only)?, purge)?;
         return Ok(0);
     }
 
-    // Without a terminal there's no one to drive the menus, so behave like --yes.
-    let guided = !yes && interactive();
+    // Without a terminal there's no one to drive the menus. Output piped into a
+    // log or a tool shelling out is not consent to delete: that takes --yes.
+    if !yes && !interactive() {
+        anyhow::bail!("no terminal to confirm in — pass --yes to clean the safe items unattended, or --dry-run to see them");
+    }
+    let guided = !yes;
 
     let before = Baseline::now();
     let reports = collect(&cfg, only)?;
@@ -205,7 +209,27 @@ pub fn run_clean(
             continue;
         }
 
-        let in_use = in_use.get_or_insert_with(InUse::capture);
+        // A tick then Enter is quick; with --purge it is also final. Say so
+        // once, with what it covers, before anything goes.
+        let final_items: Vec<&&Finding> = chosen
+            .iter()
+            .filter(|f| crate::report::purges(f, purge))
+            .collect();
+        if guided && !final_items.is_empty() {
+            let bytes: u64 = final_items.iter().map(|f| f.size).sum();
+            if !ui::confirm(&format!(
+                "Delete {} item(s) ({}) for good, without the Trash?",
+                final_items.len(),
+                ui::human(bytes)
+            ))? {
+                continue;
+            }
+        }
+
+        if in_use.is_none() {
+            in_use = Some(InUse::capture()?);
+        }
+        let in_use = in_use.as_ref().expect("captured above");
         outcome.absorb(apply_findings(&chosen, purge, in_use));
         ui::ok(&format!("{} cleaned", report.target));
     }
@@ -220,8 +244,8 @@ pub fn run_clean(
 /// What `clean --yes` would do right now, item by item, with nothing touched:
 /// the safe items and exactly what each leaves in use, then everything that
 /// would need a deliberate tick. This is what a scheduled run will do.
-pub fn print_plan(reports: &[Report], purge: bool) {
-    let in_use = InUse::capture();
+pub fn print_plan(reports: &[Report], purge: bool) -> Result<()> {
+    let in_use = InUse::capture()?;
     let mut totals = ui::PlanTotals::default();
     for report in reports.iter().filter(|r| !r.is_empty()) {
         ui::print_plan_header(report);
@@ -236,6 +260,7 @@ pub fn print_plan(reports: &[Report], purge: bool) {
         }
     }
     ui::print_plan_totals(&totals);
+    Ok(())
 }
 
 /// Recent runs from the journal, newest last.
@@ -435,9 +460,16 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
     }
     let mut failures = 0;
 
-    if !report.local_snapshots.is_empty() {
-        let staged = report
-            .local_snapshots
+    // A Time Machine snapshot can be the only copy of a file deleted since the
+    // last backup to the drive — on a laptop away from it for days, the only
+    // backup there is. Those go only when someone says so in a terminal.
+    let (backups, others): (Vec<&String>, Vec<&String>) = report
+        .local_snapshots
+        .iter()
+        .partition(|s| fsutil::is_backup_snapshot(s));
+    let mut doomed: Vec<&String> = Vec::new();
+    if !others.is_empty() {
+        let staged = others
             .iter()
             .filter(|s| fsutil::is_update_snapshot(s))
             .count();
@@ -446,29 +478,41 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
                 "{staged} of these hold a staged macOS update — deleting them abandons it"
             ));
         }
-        let go = fix
-            || ui::confirm(&format!(
-                "Delete {} APFS local snapshot(s)?",
-                report.local_snapshots.len()
-            ))?;
-        if go {
-            for snap in &report.local_snapshots {
-                let Some(id) = fsutil::snapshot_id(snap) else {
-                    continue;
-                };
-                let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), id];
-                match exec::run(&cmd) {
-                    Ok(()) => {
-                        journal::record("deleted", Path::new(snap), 0, Some("local snapshot"))
-                    }
-                    Err(e) => {
-                        failures += 1;
-                        ui::warn(&format!("{snap}: {e} (try with sudo)"));
-                    }
+        if fix || ui::confirm(&format!("Delete {} APFS local snapshot(s)?", others.len()))? {
+            doomed.extend(others);
+        }
+    }
+    if !backups.is_empty() {
+        if interactive() {
+            ui::warn(&format!(
+                "{} Time Machine snapshot(s) may hold the only copy of files changed since your last backup",
+                backups.len()
+            ));
+            if ui::confirm("Delete the Time Machine snapshots too?")? {
+                doomed.extend(backups);
+            }
+        } else {
+            ui::warn(&format!(
+                "left {} Time Machine snapshot(s) — run `sweep doctor` in a terminal to delete them",
+                backups.len()
+            ));
+        }
+    }
+    if !doomed.is_empty() {
+        for snap in doomed {
+            let Some(id) = fsutil::snapshot_id(snap) else {
+                continue;
+            };
+            let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), id];
+            match exec::run(&cmd) {
+                Ok(()) => journal::record("deleted", Path::new(snap), 0, Some("local snapshot")),
+                Err(e) => {
+                    failures += 1;
+                    ui::warn(&format!("{snap}: {e} (try with sudo)"));
                 }
             }
-            ui::ok("local snapshots cleared");
         }
+        ui::ok("local snapshots cleared");
     }
 
     let mut trashes = Vec::new();

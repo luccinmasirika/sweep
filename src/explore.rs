@@ -119,7 +119,7 @@ fn browse(mut cwd: PathBuf) -> Result<()> {
         match actions[a] {
             "Open" => cwd = item.path.clone(),
             "Move to Trash" => {
-                if let Some(reason) = InUse::capture().why(&item.path) {
+                if let Some(reason) = InUse::capture()?.why(&item.path) {
                     ui::warn(&format!(
                         "{} is in use ({reason}) — close it first",
                         ui::pretty_path(&item.path)

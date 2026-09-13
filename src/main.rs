@@ -84,7 +84,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             dry_run,
         } => {
             if dry_run {
-                cli::print_plan(&cli::collect(&cfg, &[])?, purge);
+                cli::print_plan(&cli::collect(&cfg, &[])?, purge)?;
                 return Ok(ExitCode::SUCCESS);
             }
             journal::start();
