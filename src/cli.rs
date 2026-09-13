@@ -79,7 +79,7 @@ pub enum Command {
     },
     /// Diagnose where disk space is going, and optionally reclaim it
     Doctor {
-        /// Reclaim non-interactively: delete APFS local snapshots, empty the Trash
+        /// Reclaim non-interactively: delete update snapshots, empty the Trash (Time Machine snapshots still ask)
         #[arg(long)]
         fix: bool,
     },
@@ -460,9 +460,16 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
     }
     let mut failures = 0;
 
-    if !report.local_snapshots.is_empty() {
-        let staged = report
-            .local_snapshots
+    // A Time Machine snapshot can be the only copy of a file deleted since the
+    // last backup to the drive — on a laptop away from it for days, the only
+    // backup there is. Those go only when someone says so in a terminal.
+    let (backups, others): (Vec<&String>, Vec<&String>) = report
+        .local_snapshots
+        .iter()
+        .partition(|s| fsutil::is_backup_snapshot(s));
+    let mut doomed: Vec<&String> = Vec::new();
+    if !others.is_empty() {
+        let staged = others
             .iter()
             .filter(|s| fsutil::is_update_snapshot(s))
             .count();
@@ -471,29 +478,41 @@ pub fn run_doctor(json: bool, fix: bool) -> Result<u32> {
                 "{staged} of these hold a staged macOS update — deleting them abandons it"
             ));
         }
-        let go = fix
-            || ui::confirm(&format!(
-                "Delete {} APFS local snapshot(s)?",
-                report.local_snapshots.len()
-            ))?;
-        if go {
-            for snap in &report.local_snapshots {
-                let Some(id) = fsutil::snapshot_id(snap) else {
-                    continue;
-                };
-                let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), id];
-                match exec::run(&cmd) {
-                    Ok(()) => {
-                        journal::record("deleted", Path::new(snap), 0, Some("local snapshot"))
-                    }
-                    Err(e) => {
-                        failures += 1;
-                        ui::warn(&format!("{snap}: {e} (try with sudo)"));
-                    }
+        if fix || ui::confirm(&format!("Delete {} APFS local snapshot(s)?", others.len()))? {
+            doomed.extend(others);
+        }
+    }
+    if !backups.is_empty() {
+        if interactive() {
+            ui::warn(&format!(
+                "{} Time Machine snapshot(s) may hold the only copy of files changed since your last backup",
+                backups.len()
+            ));
+            if ui::confirm("Delete the Time Machine snapshots too?")? {
+                doomed.extend(backups);
+            }
+        } else {
+            ui::warn(&format!(
+                "left {} Time Machine snapshot(s) — run `sweep doctor` in a terminal to delete them",
+                backups.len()
+            ));
+        }
+    }
+    if !doomed.is_empty() {
+        for snap in doomed {
+            let Some(id) = fsutil::snapshot_id(snap) else {
+                continue;
+            };
+            let cmd = vec!["tmutil".into(), "deletelocalsnapshots".into(), id];
+            match exec::run(&cmd) {
+                Ok(()) => journal::record("deleted", Path::new(snap), 0, Some("local snapshot")),
+                Err(e) => {
+                    failures += 1;
+                    ui::warn(&format!("{snap}: {e} (try with sudo)"));
                 }
             }
-            ui::ok("local snapshots cleared");
         }
+        ui::ok("local snapshots cleared");
     }
 
     let mut trashes = Vec::new();

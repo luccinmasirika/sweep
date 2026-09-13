@@ -47,7 +47,7 @@ sweep dupes [DIR]          # find byte-identical duplicates and trash extras
 sweep uninstall <App>      # remove an app and its whole footprint
 sweep maintenance          # flush DNS, rebuild Spotlight, reset Launch Services…
 sweep doctor               # diagnose where space is going
-sweep doctor --fix         # also delete APFS local snapshots and empty every Trash
+sweep doctor --fix         # also delete update snapshots and empty every Trash
 sweep schedule install     # run `sweep smart` on a recurring launchd schedule
 sweep log                  # what recent cleans did, scheduled ones included
 sweep config               # print the effective configuration

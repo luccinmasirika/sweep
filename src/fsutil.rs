@@ -840,6 +840,11 @@ pub fn snapshot_id(line: &str) -> Option<String> {
 /// True for the snapshots macOS leaves behind when an update is staged. They
 /// look like Time Machine snapshots to `tmutil` but have nothing to do with
 /// backups, and deleting them is how the staged update is abandoned.
+/// A Time Machine snapshot, as opposed to one macOS takes for an update.
+pub fn is_backup_snapshot(line: &str) -> bool {
+    line.contains("com.apple.TimeMachine")
+}
+
 pub fn is_update_snapshot(line: &str) -> bool {
     line.contains("com.apple.os.update") || line.contains("MSUPrepareUpdate")
 }
@@ -918,9 +923,9 @@ fn apfs_container() -> Option<Container> {
     parse_container(&out)
 }
 
-/// Look for a macOS update that was staged and left unfinished. Any one of the
-/// three signals alone is normal noise; together they are the reason tens of
-/// gigabytes are missing with no large file in sight.
+/// Look for a macOS update that was staged and left unfinished. Only a broken
+/// seal or an update snapshot says so: a big Preboot on its own is just a
+/// recent macOS, whose cryptexes keep it well past what it used to be.
 fn stalled_update(container: Option<&Container>) -> Option<StalledUpdate> {
     let snapshots: Vec<String> = local_snapshots()
         .into_iter()
@@ -931,18 +936,30 @@ fn stalled_update(container: Option<&Container>) -> Option<StalledUpdate> {
         .and_then(|c| c.volume("Preboot"))
         .map(|v| v.consumed)
         .unwrap_or(0);
-    // A healthy Preboot is a couple of GB; past that it is holding a staged
-    // system. Only the excess is attributed, and the installer sitting inside
-    // Preboot is deliberately not measured on its own — it is already in there.
-    const PREBOOT_NORMAL: u64 = 4_000_000_000;
-    if !seal_broken && snapshots.is_empty() && preboot <= PREBOOT_NORMAL {
+    stalled(seal_broken, snapshots, preboot, || {
+        dir_size(Path::new("/Library/Updates"))
+    })
+}
+
+/// A healthy Preboot on current macOS, cryptexes included. Past that it is
+/// holding a staged system; only the excess is attributed, and the installer
+/// inside Preboot isn't measured on its own — it is already in there.
+const PREBOOT_NORMAL: u64 = 10_000_000_000;
+
+fn stalled(
+    seal_broken: bool,
+    update_snapshots: Vec<String>,
+    preboot: u64,
+    updates: impl FnOnce() -> u64,
+) -> Option<StalledUpdate> {
+    if !seal_broken && update_snapshots.is_empty() {
         return None;
     }
     Some(StalledUpdate {
         seal_broken,
-        update_snapshots: snapshots,
+        update_snapshots,
         preboot_bytes: preboot.saturating_sub(PREBOOT_NORMAL),
-        updates_bytes: dir_size(Path::new("/Library/Updates")),
+        updates_bytes: updates(),
     })
 }
 
@@ -1462,6 +1479,17 @@ pub(crate) mod tests {
             &cargo
         ));
         assert!(is_protected(Path::new("/Users/x/.cargo/bin"), &cargo));
+    }
+
+    #[test]
+    fn a_big_preboot_alone_is_not_a_stalled_update() {
+        assert!(stalled(false, Vec::new(), 9_090_000_000, || 0).is_none());
+        assert!(stalled(false, Vec::new(), 18_000_000_000, || 0).is_none());
+
+        let broken = stalled(true, Vec::new(), 18_000_000_000, || 0).unwrap();
+        assert_eq!(broken.preboot_bytes, 8_000_000_000);
+        let staged = vec!["com.apple.os.update-4F1E.local".to_string()];
+        assert!(stalled(false, staged, 0, || 0).is_some());
     }
 
     #[test]
