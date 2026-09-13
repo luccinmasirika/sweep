@@ -113,7 +113,8 @@ pub fn system_caches(cfg: &Config) -> Vec<Finding> {
 }
 
 /// Global, fixed-location developer caches (package managers, editors, mobile
-/// SDKs). All regenerable; the only `risky` one is a slow multi-GB re-download.
+/// SDKs). All regenerable, but not all for free: a slow multi-GB re-download
+/// and a Maven repository that also holds local installs take a tick.
 pub fn dev_caches(home: &Path) -> Vec<Finding> {
     resolve(
         home,
@@ -127,8 +128,8 @@ pub fn dev_caches(home: &Path) -> Vec<Finding> {
             Entry {
                 rel: ".m2/repository",
                 action: Action::Empty,
-                note: Some("maven repository"),
-                risky: false,
+                note: Some("maven repository — also holds what `mvn install` built locally"),
+                risky: true,
             },
             Entry {
                 rel: ".gradle/caches",
