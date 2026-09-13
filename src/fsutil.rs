@@ -534,10 +534,30 @@ fn delete_from(path: &Path, trashes: &[PathBuf]) -> Result<()> {
 /// followed into its target.
 fn hard_remove(path: &Path, meta: &fs::Metadata) -> Result<()> {
     if meta.is_dir() {
+        // Deleting a folder deletes into whatever is mounted inside it: a
+        // network share or an external disk would be wiped along with it.
+        if let Some(mount) = mount_inside(path, meta.dev()) {
+            bail!(
+                "refusing to remove {}: another volume is mounted at {}",
+                path.display(),
+                mount.display()
+            );
+        }
         fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))
     } else {
         fs::remove_file(path).with_context(|| format!("removing {}", path.display()))
     }
+}
+
+/// The first folder under `path` that belongs to another device than `dev`.
+fn mount_inside(path: &Path, dev: u64) -> Option<PathBuf> {
+    walkdir::WalkDir::new(path)
+        .min_depth(1)
+        .into_iter()
+        .flatten()
+        .filter(|e| e.file_type().is_dir())
+        .find(|e| e.metadata().is_ok_and(|m| m.dev() != dev))
+        .map(|e| e.into_path())
 }
 
 /// Something a clean deliberately left in place, and why.
@@ -1479,6 +1499,20 @@ pub(crate) mod tests {
             &cargo
         ));
         assert!(is_protected(Path::new("/Users/x/.cargo/bin"), &cargo));
+    }
+
+    #[test]
+    fn a_folder_on_one_volume_has_nothing_mounted_inside() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("a/b/c")).unwrap();
+        let dev = fs::symlink_metadata(dir.path()).unwrap().dev();
+
+        assert_eq!(mount_inside(dir.path(), dev), None);
+        // Seen from a different device, the first folder down is the mount.
+        assert_eq!(
+            mount_inside(dir.path(), dev + 1),
+            Some(dir.path().join("a"))
+        );
     }
 
     #[test]
