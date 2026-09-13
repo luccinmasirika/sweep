@@ -24,20 +24,25 @@ impl Target for Privacy {
         let mut report = Report::new(self.name());
         let f = &mut report.findings;
 
-        // Browser caches and saved Mail attachments: safe, regenerated or
-        // re-downloaded on demand.
+        // Browser caches: safe, regenerated on demand.
         for (rel, note) in [
             ("Library/Caches/com.apple.Safari", "safari cache"),
             ("Library/Caches/Google/Chrome", "chrome cache"),
             ("Library/Caches/Firefox", "firefox cache"),
             ("Library/Caches/com.microsoft.edgemac", "edge cache"),
-            (
-                "Library/Containers/com.apple.mail/Data/Library/Mail Downloads",
-                "mail downloads",
-            ),
         ] {
             push(f, home.join(rel), CleanAction::EmptyDir, false, note);
         }
+
+        // Mail saves an attachment here when it is opened, and edits made to
+        // it are saved in place: not a cache to clear without a look.
+        push(
+            f,
+            home.join("Library/Containers/com.apple.mail/Data/Library/Mail Downloads"),
+            CleanAction::EmptyDir,
+            true,
+            "attachments you opened in Mail — edits made to them are saved here",
+        );
 
         // Cookies and history: risky — clearing them logs you out and erases
         // browsing history, so they start unticked and never go with `--yes`.
@@ -84,7 +89,7 @@ impl Target for Privacy {
                 prof.join("places.sqlite"),
                 CleanAction::RemovePath,
                 true,
-                "firefox history",
+                "firefox history and bookmarks",
             );
         }
 
