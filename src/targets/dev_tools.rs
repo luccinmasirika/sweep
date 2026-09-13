@@ -21,192 +21,223 @@ impl Target for DevTools {
     }
 
     fn scan(&self, cfg: &Config) -> Result<Report> {
+        // Each probe asks a different tool, and some take seconds (`brew
+        // cleanup --dry-run`, a Docker daemon waking up), so they all run at
+        // once; findings keep this order.
+        const PROBES: &[fn(&Config) -> Vec<Finding>] = &[
+            homebrew, npm, pnpm, yarn, cargo, pip, go, bun, deno, uv, composer, conda, simulators,
+            docker,
+        ];
         let mut report = Report::new(self.name());
-        let f = &mut report.findings;
-
-        if exec::command_exists("brew") {
-            f.push(
-                probe_finding(
-                    "Homebrew cache",
-                    brew_cleanup_size,
-                    &["brew", "cleanup", "-s"],
-                )
-                .with_note("old versions and downloads"),
-            );
-            let orphans = brew_orphans();
-            let count = orphans.len();
-            // "Unneeded" means nothing depends on them, not that nobody uses
-            // them: a formula installed as a dependency is often run directly.
-            f.push(
-                dirs_finding("Homebrew orphans", orphans, &["brew", "autoremove"])
-                    .risky(true)
-                    .with_note(format!(
-                        "{count} formulae nothing depends on — check you don't use them"
-                    )),
-            );
-        }
-
-        if exec::command_exists("npm") {
-            f.push(
-                // `npm cache clean` clears the package cache, `_cacache`; the
-                // `_npx` installs next to it stay, and `projects` reports those.
-                dirs_finding(
-                    "npm cache",
-                    store_path(&["npm", "config", "get", "cache"])
-                        .map(|cache| cache.join("_cacache"))
-                        .into_iter()
-                        .collect(),
-                    &["npm", "cache", "clean", "--force"],
-                )
-                .with_note("npm"),
-            );
-        }
-
-        if exec::command_exists("pnpm") {
-            let active = store_path(&["pnpm", "store", "path"]);
-            f.push(
-                dirs_finding(
-                    "pnpm store",
-                    active.iter().cloned().collect(),
-                    &["pnpm", "store", "prune"],
-                )
-                .with_note("pnpm"),
-            );
-            // `pnpm store prune` only knows about the store the current pnpm
-            // uses; a major upgrade leaves the previous `store/vN` behind,
-            // whole, forever, and nothing ever looks at it again.
-            f.extend(abandoned_stores(active.as_deref()));
-        }
-
-        if exec::command_exists("yarn") {
-            f.push(
-                dirs_finding(
-                    "yarn cache",
-                    store_path(&["yarn", "cache", "dir"]).into_iter().collect(),
-                    &["yarn", "cache", "clean"],
-                )
-                .with_note("yarn"),
-            );
-        }
-
-        let cargo_cache = cfg.home.join(".cargo/registry/cache");
-        if cargo_cache.is_dir() {
-            f.push(
-                Finding::dir(
-                    cargo_cache.clone(),
-                    fsutil::dir_size(&cargo_cache),
-                    CleanAction::EmptyDir,
-                )
-                .with_note("cargo registry cache"),
-            );
-        }
-
-        let pip_cache = cfg.home.join("Library/Caches/pip");
-        if pip_cache.is_dir() {
-            f.push(
-                Finding::dir(
-                    pip_cache.clone(),
-                    fsutil::dir_size(&pip_cache),
-                    CleanAction::EmptyDir,
-                )
-                .with_note("pip cache"),
-            );
-        }
-
-        if cfg.aggressive && exec::command_exists("go") {
-            f.push(
-                dirs_finding(
-                    "go module cache",
-                    vec![cfg.home.join("go/pkg/mod")],
-                    &["go", "clean", "-modcache"],
-                )
-                .with_note("re-downloaded on next build"),
-            );
-        }
-
-        if exec::command_exists("bun") {
-            f.push(
-                dirs_finding(
-                    "bun cache",
-                    vec![cfg.home.join(".bun/install/cache")],
-                    &["bun", "pm", "cache", "rm"],
-                )
-                .with_note("bun"),
-            );
-        }
-
-        if exec::command_exists("deno") {
-            f.push(
-                dirs_finding(
-                    "deno cache",
-                    vec![cfg.home.join("Library/Caches/deno")],
-                    &["deno", "clean"],
-                )
-                .with_note("deno"),
-            );
-        }
-
-        if exec::command_exists("uv") {
-            f.push(dirs_finding(
-                "uv cache",
-                store_path(&["uv", "cache", "dir"]).into_iter().collect(),
-                &["uv", "cache", "clean"],
-            ));
-        }
-
-        if exec::command_exists("composer") {
-            f.push(dirs_finding(
-                "composer cache",
-                store_path(&["composer", "config", "--global", "cache-dir"])
-                    .into_iter()
-                    .collect(),
-                &["composer", "clear-cache"],
-            ));
-        }
-
-        if exec::command_exists("conda") {
-            let pkgs = store_path(&["conda", "info", "--base"]).map(|base| base.join("pkgs"));
-            // Environments created with hard links or softlinks point into
-            // `pkgs`; `clean -a` can leave them broken.
-            f.push(
-                dirs_finding(
-                    "conda packages",
-                    pkgs.into_iter().collect(),
-                    &["conda", "clean", "-a", "-y"],
-                )
-                .risky(true)
-                .with_note("can break environments linked to the package cache"),
-            );
-        }
-
-        // The Command Line Tools ship `xcrun` without `simctl`; only a full
-        // Xcode has simulators to delete.
-        if let Some(devices) = unavailable_simulators(&cfg.home) {
-            f.push(
-                dirs_finding(
-                    "unavailable simulators",
-                    devices,
-                    &["xcrun", "simctl", "delete", "unavailable"],
-                )
-                .risky(true)
-                .with_note("their apps and data go with them"),
-            );
-        }
-
-        if exec::command_exists("docker") {
-            if let Some(usage) = docker_usage() {
-                f.extend(docker_findings(&usage, cfg.aggressive, cfg.prune_volumes));
-            }
-        }
-
+        let (probed, catalogued) = std::thread::scope(|s| {
+            let probes: Vec<_> = PROBES
+                .iter()
+                .map(|probe| s.spawn(move || probe(cfg)))
+                .collect();
+            let catalogued = catalog::dev_caches(&cfg.home);
+            let probed: Vec<Finding> = probes
+                .into_iter()
+                .flat_map(|h| h.join().expect("a probe panicked"))
+                .collect();
+            (probed, catalogued)
+        });
         // A cleanup command with nothing to clean is noise, and one whose tool
         // can't reach its daemon would only fail.
-        f.retain(|x| !matches!(x.action, CleanAction::Command(_)) || x.size > 0);
-
-        f.extend(catalog::dev_caches(&cfg.home));
-
+        report.findings = probed
+            .into_iter()
+            .filter(|x| !matches!(x.action, CleanAction::Command(_)) || x.size > 0)
+            .chain(catalogued)
+            .collect();
         Ok(report)
     }
+}
+
+fn homebrew(_: &Config) -> Vec<Finding> {
+    if !exec::command_exists("brew") {
+        return Vec::new();
+    }
+    let cache = probe_finding(
+        "Homebrew cache",
+        brew_cleanup_size,
+        &["brew", "cleanup", "-s"],
+    )
+    .with_note("old versions and downloads");
+    let orphans = brew_orphans();
+    let count = orphans.len();
+    // "Unneeded" means nothing depends on them, not that nobody uses them: a
+    // formula installed as a dependency is often run directly.
+    let orphans = dirs_finding("Homebrew orphans", orphans, &["brew", "autoremove"])
+        .risky(true)
+        .with_note(format!(
+            "{count} formulae nothing depends on — check you don't use them"
+        ));
+    vec![cache, orphans]
+}
+
+fn npm(_: &Config) -> Vec<Finding> {
+    if !exec::command_exists("npm") {
+        return Vec::new();
+    }
+    // `npm cache clean` clears the package cache, `_cacache`; the `_npx`
+    // installs next to it stay, and `projects` reports those.
+    vec![dirs_finding(
+        "npm cache",
+        store_path(&["npm", "config", "get", "cache"])
+            .map(|cache| cache.join("_cacache"))
+            .into_iter()
+            .collect(),
+        &["npm", "cache", "clean", "--force"],
+    )
+    .with_note("npm")]
+}
+
+fn pnpm(_: &Config) -> Vec<Finding> {
+    if !exec::command_exists("pnpm") {
+        return Vec::new();
+    }
+    let active = store_path(&["pnpm", "store", "path"]);
+    let mut found = vec![dirs_finding(
+        "pnpm store",
+        active.iter().cloned().collect(),
+        &["pnpm", "store", "prune"],
+    )
+    .with_note("pnpm")];
+    // `pnpm store prune` only knows about the store the current pnpm uses; a
+    // major upgrade leaves the previous `store/vN` behind, whole, forever, and
+    // nothing ever looks at it again.
+    found.extend(abandoned_stores(active.as_deref()));
+    found
+}
+
+fn yarn(_: &Config) -> Vec<Finding> {
+    if !exec::command_exists("yarn") {
+        return Vec::new();
+    }
+    vec![dirs_finding(
+        "yarn cache",
+        store_path(&["yarn", "cache", "dir"]).into_iter().collect(),
+        &["yarn", "cache", "clean"],
+    )
+    .with_note("yarn")]
+}
+
+fn cargo(cfg: &Config) -> Vec<Finding> {
+    cache_dir(
+        cfg.home.join(".cargo/registry/cache"),
+        "cargo registry cache",
+    )
+}
+
+fn pip(cfg: &Config) -> Vec<Finding> {
+    cache_dir(cfg.home.join("Library/Caches/pip"), "pip cache")
+}
+
+fn cache_dir(dir: PathBuf, note: &str) -> Vec<Finding> {
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let size = fsutil::dir_size(&dir);
+    vec![Finding::dir(dir, size, CleanAction::EmptyDir).with_note(note)]
+}
+
+fn go(cfg: &Config) -> Vec<Finding> {
+    if !cfg.aggressive || !exec::command_exists("go") {
+        return Vec::new();
+    }
+    vec![dirs_finding(
+        "go module cache",
+        vec![cfg.home.join("go/pkg/mod")],
+        &["go", "clean", "-modcache"],
+    )
+    .with_note("re-downloaded on next build")]
+}
+
+fn bun(cfg: &Config) -> Vec<Finding> {
+    if !exec::command_exists("bun") {
+        return Vec::new();
+    }
+    vec![dirs_finding(
+        "bun cache",
+        vec![cfg.home.join(".bun/install/cache")],
+        &["bun", "pm", "cache", "rm"],
+    )
+    .with_note("bun")]
+}
+
+fn deno(cfg: &Config) -> Vec<Finding> {
+    if !exec::command_exists("deno") {
+        return Vec::new();
+    }
+    vec![dirs_finding(
+        "deno cache",
+        vec![cfg.home.join("Library/Caches/deno")],
+        &["deno", "clean"],
+    )
+    .with_note("deno")]
+}
+
+fn uv(_: &Config) -> Vec<Finding> {
+    if !exec::command_exists("uv") {
+        return Vec::new();
+    }
+    vec![dirs_finding(
+        "uv cache",
+        store_path(&["uv", "cache", "dir"]).into_iter().collect(),
+        &["uv", "cache", "clean"],
+    )]
+}
+
+fn composer(_: &Config) -> Vec<Finding> {
+    if !exec::command_exists("composer") {
+        return Vec::new();
+    }
+    vec![dirs_finding(
+        "composer cache",
+        store_path(&["composer", "config", "--global", "cache-dir"])
+            .into_iter()
+            .collect(),
+        &["composer", "clear-cache"],
+    )]
+}
+
+fn conda(_: &Config) -> Vec<Finding> {
+    if !exec::command_exists("conda") {
+        return Vec::new();
+    }
+    let pkgs = store_path(&["conda", "info", "--base"]).map(|base| base.join("pkgs"));
+    // Environments created with hard links or softlinks point into `pkgs`;
+    // `clean -a` can leave them broken.
+    vec![dirs_finding(
+        "conda packages",
+        pkgs.into_iter().collect(),
+        &["conda", "clean", "-a", "-y"],
+    )
+    .risky(true)
+    .with_note("can break environments linked to the package cache")]
+}
+
+fn simulators(cfg: &Config) -> Vec<Finding> {
+    // The Command Line Tools ship `xcrun` without `simctl`; only a full Xcode
+    // has simulators to delete.
+    let Some(devices) = unavailable_simulators(&cfg.home) else {
+        return Vec::new();
+    };
+    vec![dirs_finding(
+        "unavailable simulators",
+        devices,
+        &["xcrun", "simctl", "delete", "unavailable"],
+    )
+    .risky(true)
+    .with_note("their apps and data go with them")]
+}
+
+fn docker(cfg: &Config) -> Vec<Finding> {
+    if !exec::command_exists("docker") {
+        return Vec::new();
+    }
+    docker_usage()
+        .map(|usage| docker_findings(&usage, cfg.aggressive, cfg.prune_volumes))
+        .unwrap_or_default()
 }
 
 /// A cleanup run through a tool's own CLI, weighed by the folders it clears —
