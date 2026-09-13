@@ -170,8 +170,12 @@ pub fn run_clean(
         return Ok(0);
     }
 
-    // Without a terminal there's no one to drive the menus, so behave like --yes.
-    let guided = !yes && interactive();
+    // Without a terminal there's no one to drive the menus. Output piped into a
+    // log or a tool shelling out is not consent to delete: that takes --yes.
+    if !yes && !interactive() {
+        anyhow::bail!("no terminal to confirm in — pass --yes to clean the safe items unattended, or --dry-run to see them");
+    }
+    let guided = !yes;
 
     let before = Baseline::now();
     let reports = collect(&cfg, only)?;

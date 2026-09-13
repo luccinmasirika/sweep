@@ -37,7 +37,10 @@ const TASKS: &[Task] = &[
 ];
 
 pub fn run(fix: bool) -> Result<u32> {
-    let chosen: Vec<&Task> = if fix || !interactive() {
+    if !fix && !interactive() {
+        anyhow::bail!("no terminal to choose tasks in — pass --fix to run them unattended");
+    }
+    let chosen: Vec<&Task> = if fix {
         TASKS.iter().collect()
     } else {
         let labels: Vec<&str> = TASKS.iter().map(|t| t.label).collect();
