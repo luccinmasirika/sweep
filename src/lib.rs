@@ -1,4 +1,5 @@
 pub mod apps;
+pub mod bulk;
 pub mod catalog;
 pub mod cli;
 pub mod config;
