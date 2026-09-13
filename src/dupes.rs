@@ -56,7 +56,10 @@ pub fn run(start: Option<PathBuf>, json: bool) -> Result<()> {
             println!("    {}", ui::pretty_path(p));
         }
         if trashing && ui::confirm("Move all but the first to Trash?")? {
-            let in_use = in_use.get_or_insert_with(InUse::capture);
+            if in_use.is_none() {
+                in_use = Some(InUse::capture()?);
+            }
+            let in_use = in_use.as_ref().expect("captured above");
             for p in &set.paths[1..] {
                 if let Some(reason) = in_use.why(p) {
                     ui::warn(&format!("left {} ({reason})", ui::pretty_path(p)));

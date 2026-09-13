@@ -39,7 +39,7 @@ pub fn run(cfg: &Config, yes: bool, purge: bool) -> Result<u32> {
         }
     }
 
-    let mut outcome = cli::apply_findings(&safe, purge, &InUse::capture());
+    let mut outcome = cli::apply_findings(&safe, purge, &InUse::capture()?);
     outcome.report(&before);
     if !yes {
         outcome.failures += cli::offer_to_empty(&outcome.trash)?;

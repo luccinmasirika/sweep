@@ -166,7 +166,7 @@ pub fn run_clean(
     cfg.prune_volumes = volumes;
 
     if dry_run {
-        print_plan(&collect(&cfg, only)?, purge);
+        print_plan(&collect(&cfg, only)?, purge)?;
         return Ok(0);
     }
 
@@ -209,7 +209,10 @@ pub fn run_clean(
             continue;
         }
 
-        let in_use = in_use.get_or_insert_with(InUse::capture);
+        if in_use.is_none() {
+            in_use = Some(InUse::capture()?);
+        }
+        let in_use = in_use.as_ref().expect("captured above");
         outcome.absorb(apply_findings(&chosen, purge, in_use));
         ui::ok(&format!("{} cleaned", report.target));
     }
@@ -224,8 +227,8 @@ pub fn run_clean(
 /// What `clean --yes` would do right now, item by item, with nothing touched:
 /// the safe items and exactly what each leaves in use, then everything that
 /// would need a deliberate tick. This is what a scheduled run will do.
-pub fn print_plan(reports: &[Report], purge: bool) {
-    let in_use = InUse::capture();
+pub fn print_plan(reports: &[Report], purge: bool) -> Result<()> {
+    let in_use = InUse::capture()?;
     let mut totals = ui::PlanTotals::default();
     for report in reports.iter().filter(|r| !r.is_empty()) {
         ui::print_plan_header(report);
@@ -240,6 +243,7 @@ pub fn print_plan(reports: &[Report], purge: bool) {
         }
     }
     ui::print_plan_totals(&totals);
+    Ok(())
 }
 
 /// Recent runs from the journal, newest last.

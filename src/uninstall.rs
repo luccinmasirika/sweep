@@ -142,7 +142,7 @@ fn uninstall_one(
 
     // Pulling files out from under a running app can crash it or leave it
     // half-removed; better to stop and ask for it to be quit first.
-    let in_use = InUse::capture();
+    let in_use = InUse::capture()?;
     if let Some(reason) = in_use.why(&app.path) {
         ui::warn(&format!(
             "{} can't be removed while in use ({reason}) — quit it and run again",

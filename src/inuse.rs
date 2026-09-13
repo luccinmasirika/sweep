@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use anyhow::{bail, Context, Result};
+
 use crate::{apps, exec};
 
 /// Caches that belong to a system service rather than to anything the user
@@ -46,14 +48,16 @@ struct RunningApp {
 }
 
 impl InUse {
-    pub fn capture() -> Self {
-        let mut open = open_files();
+    /// Fails rather than coming back empty: a snapshot that couldn't be taken
+    /// would say nothing is in use, and every busy file would go.
+    pub fn capture() -> Result<Self> {
+        let mut open = open_files()?;
         open.sort();
-        Self {
+        Ok(Self {
             open,
-            apps: running_apps(),
+            apps: running_apps()?,
             library: dirs::home_dir().map(|h| h.join("Library")),
-        }
+        })
     }
 
     /// Why `path` must be left alone right now, or `None` if nothing is using
@@ -123,12 +127,17 @@ impl InUse {
 }
 
 /// Every file open by a process we're allowed to inspect. `-n -P` skips host
-/// and port lookups, which otherwise stretch a sub-second call to a minute.
-fn open_files() -> Vec<(PathBuf, String)> {
-    let Ok(out) = exec::capture(&["lsof", "-w", "-n", "-P", "-Fcn"].map(String::from)) else {
-        return Vec::new();
-    };
-    parse_lsof(&out)
+/// and port lookups, which otherwise stretch a sub-second call to a minute, and
+/// `-b` keeps a hung network mount from stalling it into the timeout.
+fn open_files() -> Result<Vec<(PathBuf, String)>> {
+    let out = exec::capture(&["lsof", "-b", "-w", "-n", "-P", "-Fcn"].map(String::from))
+        .context("couldn't list open files with lsof, so nothing is safe to remove")?;
+    let open = parse_lsof(&out);
+    // This process alone has files open; an empty list is a failed listing.
+    if open.is_empty() {
+        bail!("lsof listed no open files, so nothing is safe to remove");
+    }
+    Ok(open)
 }
 
 /// `lsof -F` prints one field per line: `c` the command of the process that
@@ -150,15 +159,14 @@ fn parse_lsof(out: &str) -> Vec<(PathBuf, String)> {
 }
 
 /// Apps with a process running, from the `.app` bundle each executable lives in.
-fn running_apps() -> Vec<RunningApp> {
-    let Ok(out) = exec::capture(&["ps", "-Ao", "comm="].map(String::from)) else {
-        return Vec::new();
-    };
+fn running_apps() -> Result<Vec<RunningApp>> {
+    let out = exec::capture(&["ps", "-Ao", "comm="].map(String::from))
+        .context("couldn't list running apps with ps, so nothing is safe to remove")?;
     let bundles: HashSet<PathBuf> = out
         .lines()
         .filter_map(|exe| exe.find(".app/").map(|end| PathBuf::from(&exe[..end + 4])))
         .collect();
-    bundles
+    Ok(bundles
         .into_iter()
         .filter_map(|bundle| {
             let name = bundle.file_stem()?.to_string_lossy().into_owned();
@@ -167,7 +175,7 @@ fn running_apps() -> Vec<RunningApp> {
                 name,
             })
         })
-        .collect()
+        .collect())
 }
 
 #[cfg(test)]
