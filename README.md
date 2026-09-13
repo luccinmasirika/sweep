@@ -40,12 +40,12 @@ sweep clean --dry-run      # exactly what would go, and what's left in use
 sweep clean --yes          # skip the prompts (only safe, idle items)
 sweep clean --only projects,app-caches
 sweep clean --aggressive   # prune all unused Docker images, heavier dev caches
-sweep clean --purge        # delete removable items outright instead of trashing
+sweep clean --purge        # delete regenerable items outright instead of trashing
 sweep smart                # scan everything, then clean what's safe — one step
 sweep explore [DIR]        # browse what's big and trash it interactively
 sweep dupes [DIR]          # find byte-identical duplicates and trash extras
 sweep uninstall <App>      # remove an app and its whole footprint
-sweep maintenance          # flush DNS, rebuild Spotlight, reset Launch Services…
+sweep maintenance          # flush DNS, run periodic scripts (Spotlight rebuild opt-in)
 sweep doctor               # diagnose where space is going
 sweep doctor --fix         # also delete update snapshots and empty every Trash
 sweep schedule install     # run `sweep smart` on a recurring launchd schedule
@@ -55,8 +55,17 @@ sweep config               # print the effective configuration
 
 Removable items (project dirs, big files) are **moved to the Trash** so a
 mistake is undoable with Finder's "Put Back", or pass `--purge` to delete
-immediately. Pure caches are always deleted outright. `--yes` only touches
-safe, idle items — never personal files or projects that still look active.
+regenerable ones immediately — personal items go to the Trash even then, and a
+guided clean asks once before anything is deleted for good. Pure caches are
+always deleted outright. `--yes` only touches safe, idle items — never personal
+files or projects that still look active. Without a terminal, `clean` and
+`smart` refuse to run unless `--yes` is passed: piping the output somewhere is
+not a yes.
+
+Some things are never removed, whatever is ticked: your home folder and its
+standard folders, Messages, Mail, Keychains and the other stores only their app
+manages, iCloud Drive and CloudStorage roots, media libraries like
+`.photoslibrary`, and any folder with another volume mounted inside it.
 
 Items go to the Trash through `NSFileManager`, not by scripting the Finder:
 no Automation permission to grant, no trash sound per item, and it works from
@@ -73,7 +82,8 @@ personal item and only goes if you tick it.
 Nothing in use is removed. Just before the first item goes, sweep takes one
 snapshot of what's busy — every file a process has open (`lsof`), every running
 app, and the caches of system services like iCloud Drive and Apple Account
-sign-in — and leaves those in place, listing what it skipped and why:
+sign-in — and leaves those in place, listing what it skipped and why. If that
+snapshot can't be taken, nothing is removed:
 
 ```
    in use   3.6 GB  (6 item(s) left alone — run again once they're closed)
@@ -83,7 +93,9 @@ sign-in — and leaves those in place, listing what it skipped and why:
 
 Deleting under a running app can crash it, corrupt its cache or break an update
 halfway, and a file that's still open doesn't give its space back until it's
-closed anyway. `uninstall` refuses outright while the app is running.
+closed anyway. `uninstall` refuses outright while the app is running, never
+touches an app that ships with macOS, and leaves a sibling app's data alone —
+uninstalling Chrome Canary keeps Chrome's.
 
 The numbers at the end are measured, not the scan's estimates. Each folder is
 weighed again after it's emptied, and each cleanup command's cache again after
@@ -127,14 +139,14 @@ reached through "Choose items…", so a stray Enter can't delete them.
 | --------------- | ------------------------------------------------------------------------ |
 | `system-caches` | Known paths: `~/Library/Caches`, `~/Library/Logs`, `~/.Trash`.           |
 | `app-caches`    | Cache-named dirs discovered under Application Support / Containers.       |
-| `dev-tools`     | `brew`/npm/pnpm/yarn + cargo/pip caches, `docker prune` (tools present).  |
+| `dev-tools`     | `brew`/npm/pnpm/yarn + cargo/pip caches, Docker build cache (tools present). |
 | `xcode`         | DerivedData, device support, simulators, archives, iOS backups.          |
 | `projects`      | Marker-aware home walk: project artifacts (`node_modules`, `target`, `build`…). |
 | `large-items`   | Biggest personal files/folders over a threshold (start unchecked).       |
 | `vm-images`     | Container/VM disk images (Colima, Docker, OrbStack, UTM, Parallels…).     |
 | `applications`  | Installed apps over 500 MB and leftover macOS installers (start unchecked). |
 | `heavy`         | Anything over 1 GB anywhere under `~`, by size alone — no name needed.    |
-| `privacy`       | Browser caches (safe) + cookies/history (start unchecked) + Mail downloads. |
+| `privacy`       | Browser caches (safe) + cookies/history and Mail downloads (start unchecked). |
 | `leftovers`     | Support files of uninstalled apps (opt-in; heuristic, starts unchecked). |
 
 Nothing is hard-coded to a particular machine: detectors resolve known paths
@@ -155,20 +167,31 @@ model file inside an app's support directory show up like anything else. It
 reports the folder that best describes each item — climbing out of a chain of
 single-child directories, but never as far as a folder that just holds many
 unrelated things — and skips whatever another detector already lists, so the
-same gigabytes never appear twice. Everything it finds starts unchecked.
+same gigabytes never appear twice. Everything it finds starts unchecked, and it
+never offers a folder right under your home, a media library, or anything in
+iCloud Drive or a cloud provider's folder, where deleting deletes everywhere.
 
 The `projects` walk skips version-manager and toolchain roots (`~/.nvm`,
-`~/.fnm`, `~/.volta`, `~/.asdf`, `~/.cargo`, `~/.rustup`, …) so a global
-`node_modules` is never swept, and as a last line of defence `sweep` refuses to
-delete any path belonging to a toolchain currently on your `PATH`. It also stays
-out of app/library bundles (`.app`, `.photoslibrary`, …) and skips evicted
-iCloud files so sizing one never forces a download.
+`~/.fnm`, `~/.volta`, `~/.asdf`, `~/.cargo`, `~/.rustup`, …) and editor
+extension folders (`~/.vscode`, `~/.cursor`, …) so a global `node_modules` is
+never swept, and as a last line of defence `sweep` refuses to delete any path
+belonging to a toolchain currently on your `PATH`. It also stays out of
+app/library bundles (`.app`, `.photoslibrary`, …) and skips evicted iCloud
+files so sizing one never forces a download.
+
+A name alone doesn't make a folder build output. Generic names need the project
+next to them — `target` a `Cargo.toml`, `Pods` a `Podfile`, a `venv` its own
+`pyvenv.cfg` — and a folder git tracks is never taken, whatever it's called. A
+project counts as idle when nothing in it changed and its repository hasn't
+committed, checked out or staged anything for `projects_stale_days`.
 
 ### Aggressive mode
 
-`--aggressive` upgrades `docker system prune` to `-a` (every unused image) and
-adds the heavier dev caches like `go clean -modcache`. `--volumes` additionally
-prunes Docker volumes — this destroys volume data, so it is never on by default.
+By default only Docker's build cache is cleaned without asking; stopped
+containers are listed but take a tick, since they keep whatever they wrote
+outside a volume. `--aggressive` adds every unused image and the heavier dev
+caches like `go clean -modcache`. `--volumes` also lists unused volumes — this
+destroys volume data, so it is never on by default and still takes a tick.
 
 ### Doctor
 
