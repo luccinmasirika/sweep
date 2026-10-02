@@ -959,6 +959,7 @@ dependencies = [
  "libc",
  "owo-colors",
  "predicates",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

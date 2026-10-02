@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{bail, Context, Result};
-use jwalk::WalkDirGeneric;
 use serde::Serialize;
 
 /// How much of a path could be measured. macOS answers a Full Disk Access
@@ -54,50 +53,7 @@ pub fn dir_size(path: &Path) -> u64 {
 /// tree is not part of this folder's weight, and a network share mounted in a
 /// home folder would otherwise stall the whole scan.
 pub fn dir_usage(path: &Path) -> Usage {
-    let root_dev = fs::symlink_metadata(path).map(|m| m.dev()).ok();
-    let walk = WalkDirGeneric::<((), Option<FileBlocks>)>::new(path)
-        .follow_links(false)
-        // jwalk skips dotfiles unless told otherwise, which silently leaves out
-        // `.git`, `.next`, a pnpm `node_modules/.pnpm` — often most of the bytes.
-        .skip_hidden(false)
-        .process_read_dir(move |_depth, _path, _state, children| {
-            for child in children.iter_mut().flatten() {
-                let file_type = child.file_type();
-                if file_type.is_file() {
-                    child.client_state = file_blocks(&child.path());
-                } else if file_type.is_dir()
-                    && root_dev.is_some_and(|dev| {
-                        fs::symlink_metadata(child.path()).is_ok_and(|m| m.dev() != dev)
-                    })
-                {
-                    child.read_children_path = None;
-                }
-            }
-        });
-
-    let mut tally = Tally::default();
-    let mut unreadable = false;
-    for entry in walk {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                unreadable |= is_denied(&e);
-                continue;
-            }
-        };
-        // jwalk hands back a directory it couldn't list as a normal entry,
-        // with the refusal tucked inside it.
-        if let Some(e) = &entry.read_children_error {
-            unreadable |= is_denied(e);
-        }
-        if let Some(file) = entry.client_state {
-            tally.add(file);
-        }
-    }
-    Usage {
-        bytes: tally.bytes(),
-        unreadable,
-    }
+    crate::bulk::usage(path)
 }
 
 /// On-disk bytes of these files taken together: a file linked twice counts
@@ -112,7 +68,7 @@ pub fn files_bytes(paths: &[PathBuf]) -> u64 {
 
 /// Adds up files as they cost on disk.
 #[derive(Default)]
-struct Tally {
+pub(crate) struct Tally {
     inodes: HashSet<(u64, u64)>,
     private: u64,
     /// Blocks a clone family shares, counted once per family. APFS gives an
@@ -123,7 +79,7 @@ struct Tally {
 }
 
 impl Tally {
-    fn add(&mut self, file: FileBlocks) {
+    pub(crate) fn add(&mut self, file: FileBlocks) {
         if !self.inodes.insert((file.dev, file.ino)) {
             return;
         }
@@ -137,21 +93,39 @@ impl Tally {
         }
     }
 
-    fn bytes(&self) -> u64 {
+    pub(crate) fn bytes(&self) -> u64 {
         self.private + self.shared.values().sum::<u64>()
     }
 }
 
 /// What a single file occupies, and how much of that it may share.
 #[derive(Debug, Default, Clone, Copy)]
-struct FileBlocks {
-    dev: u64,
+pub(crate) struct FileBlocks {
+    pub(crate) dev: u64,
     ino: u64,
     /// Allocated on disk, shared blocks included.
-    bytes: u64,
+    pub(crate) bytes: u64,
     /// For an APFS clone: its clone id — the same for every untouched copy —
     /// and the blocks it shares with other files.
     clone: Option<(u64, u64)>,
+}
+
+impl FileBlocks {
+    pub(crate) fn new(dev: u64, ino: u64, bytes: u64) -> Self {
+        Self {
+            dev,
+            ino,
+            bytes,
+            clone: None,
+        }
+    }
+
+    pub(crate) fn sharing(self, clone_id: u64, shared: u64) -> Self {
+        Self {
+            clone: Some((clone_id, shared)),
+            ..self
+        }
+    }
 }
 
 /// `getattrlist` instead of `lstat`: the same device, inode and allocated size,
@@ -186,10 +160,7 @@ fn file_blocks(path: &Path) -> Option<FileBlocks> {
 
     let mut clone = None;
     if flags & EF_MAY_SHARE_BLOCKS != 0 {
-        let mut buf = [0u8; 64];
-        let private = get_attrs(&c_path, 0, 0, libc::ATTR_CMNEXT_PRIVATESIZE, &mut buf)
-            .and_then(|mut r| r.u64());
-        if let Some(private) = private.filter(|p| *p < bytes) {
+        if let Some(private) = private_bytes(&c_path).filter(|p| *p < bytes) {
             clone = Some((clone_id, bytes - private));
         }
     }
@@ -199,6 +170,19 @@ fn file_blocks(path: &Path) -> Option<FileBlocks> {
         bytes,
         clone,
     })
+}
+
+/// The blocks only this file holds, shared ones left out.
+#[cfg(target_os = "macos")]
+pub(crate) fn private_size(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    private_bytes(&std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?)
+}
+
+#[cfg(target_os = "macos")]
+fn private_bytes(path: &std::ffi::CStr) -> Option<u64> {
+    let mut buf = [0u8; 64];
+    get_attrs(path, 0, 0, libc::ATTR_CMNEXT_PRIVATESIZE, &mut buf).and_then(|mut r| r.u64())
 }
 
 /// One `getattrlist` call, with a reader positioned on the first requested
@@ -257,31 +241,34 @@ fn lstat_blocks(path: &Path) -> Option<FileBlocks> {
 }
 
 #[cfg(target_os = "macos")]
-struct AttrReader<'a> {
+pub(crate) struct AttrReader<'a> {
     buf: &'a [u8],
     at: usize,
 }
 
 #[cfg(target_os = "macos")]
-impl AttrReader<'_> {
+impl<'a> AttrReader<'a> {
+    pub(crate) fn new(buf: &'a [u8], at: usize) -> Self {
+        Self { buf, at }
+    }
+
+    pub(crate) fn at(&self) -> usize {
+        self.at
+    }
+
     fn take<const N: usize>(&mut self) -> Option<[u8; N]> {
         let bytes = self.buf.get(self.at..self.at + N)?.try_into().ok()?;
         self.at = (self.at + N).next_multiple_of(4);
         Some(bytes)
     }
 
-    fn u32(&mut self) -> Option<u32> {
+    pub(crate) fn u32(&mut self) -> Option<u32> {
         self.take().map(u32::from_ne_bytes)
     }
 
-    fn u64(&mut self) -> Option<u64> {
+    pub(crate) fn u64(&mut self) -> Option<u64> {
         self.take().map(u64::from_ne_bytes)
     }
-}
-
-fn is_denied(e: &jwalk::Error) -> bool {
-    e.io_error()
-        .is_some_and(|io| io.kind() == io::ErrorKind::PermissionDenied)
 }
 
 /// Install prefixes of language toolchains found on `PATH` (e.g. the Node

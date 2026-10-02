@@ -1,11 +1,14 @@
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
+use rayon::prelude::*;
 use walkdir::WalkDir;
 
+use crate::bulk;
 use crate::config::Config;
 use crate::fsutil;
 use crate::report::{CleanAction, Finding, Report};
@@ -106,20 +109,26 @@ const VOUCHED_BY: &[(&str, &[&str])] = &[
 /// itself with its own `pyvenv.cfg`; the generic names above need their marker
 /// next to them; everything else is distinctive enough on its own.
 fn vouched(dir: &Path, name: &str) -> bool {
-    if name == "venv" || name == ".venv" {
-        return dir.join("pyvenv.cfg").is_file();
-    }
-    let Some((_, markers)) = VOUCHED_BY.iter().find(|(n, _)| *n == name) else {
-        return true;
-    };
-    let Some(siblings) = dir.parent().and_then(|p| std::fs::read_dir(p).ok()) else {
-        return false;
-    };
-    let siblings: HashSet<String> = siblings
+    let siblings: HashSet<String> = dir
+        .parent()
+        .and_then(|p| std::fs::read_dir(p).ok())
+        .into_iter()
+        .flatten()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
-    markers.iter().any(|m| has_marker(&siblings, m))
+    vouched_among(dir, name, &siblings)
+}
+
+/// `vouched`, with the names next to `dir` already at hand.
+fn vouched_among(dir: &Path, name: &str, siblings: &HashSet<String>) -> bool {
+    if name == "venv" || name == ".venv" {
+        return dir.join("pyvenv.cfg").is_file();
+    }
+    match VOUCHED_BY.iter().find(|(n, _)| *n == name) {
+        Some((_, markers)) => markers.iter().any(|m| has_marker(siblings, m)),
+        None => true,
+    }
 }
 
 /// Walk `roots` and collect removable directories: every directory whose name
@@ -131,6 +140,9 @@ fn vouched(dir: &Path, name: &str) -> bool {
 /// A root's direct children are never matches — `~/.gradle` is Gradle's own
 /// home, not a project's — and neither is anything git tracks: a committed
 /// `vendor` or `Pods` is source, not something a rebuild brings back.
+///
+/// Folders are listed in parallel, and each hit is weighed and judged in
+/// parallel once the walk is done.
 fn find_dirs(
     roots: &[PathBuf],
     names: &[&str],
@@ -138,75 +150,110 @@ fn find_dirs(
     stale: Duration,
     prune: &[PathBuf],
 ) -> Vec<Finding> {
-    let mut found = Vec::new();
-    let mut emitted: HashSet<PathBuf> = HashSet::new();
-    let mut activity = Activity::new(names, kinds);
-
-    for root in roots {
-        if !root.is_dir() {
-            continue;
-        }
-        // Stay on the root's volume: a network share mounted under it could
-        // hang the walk, and its contents aren't this disk's to clean.
-        let mut walker = WalkDir::new(root).same_file_system(true).into_iter();
-        while let Some(entry) = walker.next() {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
+    let activity = Activity::new(names, kinds);
+    let mut found: Vec<Finding> = roots
+        .iter()
+        .flat_map(|root| {
+            let Ok(listing) = bulk::list(root) else {
+                return Vec::new();
             };
-            if !entry.file_type().is_dir() {
-                continue;
-            }
-            let path = entry.path();
-            if prune.iter().any(|p| path.starts_with(p)) || emitted.contains(path) {
-                walker.skip_current_dir();
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy();
-            if is_bundle(&name) {
-                // App/library bundles are opaque directories: an Electron `.app`
-                // carries its own `node_modules`, a `.photoslibrary` its data.
-                // Descending in would mangle them.
-                walker.skip_current_dir();
-                continue;
-            }
-            if name == "node_modules" && parent_named(path, "lib") {
-                // A global toolchain install lives at `<prefix>/lib/node_modules`
-                // (npm, npx, every `-g` package). Never a project's deps.
-                walker.skip_current_dir();
-                continue;
-            }
-            if names.iter().any(|n| *n == name) && entry.depth() > 1 && vouched(path, &name) {
-                let p = path.to_path_buf();
-                if !tracked_by_git(&p, root) {
-                    found.push(finding_for(&p, stale, &mut activity, root));
-                }
-                emitted.insert(p);
-                walker.skip_current_dir();
-            } else if name == ".git" || (name == "node_modules" && !names.contains(&"node_modules"))
-            {
-                walker.skip_current_dir();
-            } else if !kinds.is_empty() {
-                // Maybe a project root: read its children once and emit any
-                // generic artifact dirs vouched for by a marker file.
-                emit_marker_artifacts(
-                    path,
-                    root,
-                    kinds,
-                    stale,
-                    &mut activity,
-                    &mut found,
-                    &mut emitted,
-                );
-            }
-        }
-    }
-
+            // Stay on the root's volume: a network share mounted under it could
+            // hang the walk, and its contents aren't this disk's to clean.
+            let search = Search {
+                dev: listing.dev,
+                names,
+                kinds,
+                prune,
+            };
+            search
+                .hits(root, 0, listing)
+                .into_par_iter()
+                .filter(|hit| !tracked_by_git(hit, root))
+                .map(|hit| finding_for(&hit, stale, &activity, root))
+                .collect::<Vec<_>>()
+        })
+        .collect();
     found.sort_by_key(|a| Reverse(a.size));
     found
 }
 
-fn finding_for(path: &Path, stale: Duration, activity: &mut Activity, root: &Path) -> Finding {
+struct Search<'a> {
+    dev: u64,
+    names: &'a [&'a str],
+    kinds: &'a [ProjectKind],
+    prune: &'a [PathBuf],
+}
+
+impl Search<'_> {
+    /// The build and cache folders under `dir`, a folder `depth` levels below
+    /// the root that isn't one itself.
+    fn hits(&self, dir: &Path, depth: usize, listing: bulk::Listing) -> Vec<PathBuf> {
+        let children: HashSet<String> = listing
+            .entries
+            .iter()
+            .map(|e| e.name.to_string_lossy().into_owned())
+            .collect();
+        // Generic artifact dirs a marker file here vouches for.
+        let artifacts: HashSet<&str> = self
+            .kinds
+            .iter()
+            .filter(|k| k.markers.iter().any(|m| has_marker(&children, m)))
+            .flat_map(|k| k.artifacts.iter().copied())
+            .collect();
+        let in_lib = dir.file_name().is_some_and(|n| n == "lib");
+
+        let mut hits = Vec::new();
+        let mut folders = Vec::new();
+        for entry in &listing.entries {
+            if entry.kind != bulk::Kind::Dir || entry.mount_point {
+                continue;
+            }
+            let name = entry.name.to_string_lossy();
+            let path = dir.join(&entry.name);
+            let below_root = depth > 0;
+            if self.prune.iter().any(|p| path.starts_with(p)) {
+                continue;
+            }
+            if below_root && artifacts.contains(name.as_ref()) {
+                hits.push(path);
+                continue;
+            }
+            if is_bundle(&name) {
+                // App/library bundles are opaque directories: an Electron `.app`
+                // carries its own `node_modules`, a `.photoslibrary` its data.
+                // Descending in would mangle them.
+                continue;
+            }
+            if name == "node_modules" && in_lib {
+                // A global toolchain install lives at `<prefix>/lib/node_modules`
+                // (npm, npx, every `-g` package). Never a project's deps.
+                continue;
+            }
+            if below_root
+                && self.names.contains(&name.as_ref())
+                && vouched_among(&path, &name, &children)
+            {
+                hits.push(path);
+                continue;
+            }
+            if name == ".git" || (name == "node_modules" && !self.names.contains(&"node_modules")) {
+                continue;
+            }
+            folders.push(path);
+        }
+        let deeper: Vec<Vec<PathBuf>> = folders
+            .into_par_iter()
+            .map(|sub| match bulk::list(&sub) {
+                Ok(listing) if listing.dev == self.dev => self.hits(&sub, depth + 1, listing),
+                _ => Vec::new(),
+            })
+            .collect();
+        hits.extend(deeper.into_iter().flatten());
+        hits
+    }
+}
+
+fn finding_for(path: &Path, stale: Duration, activity: &Activity, root: &Path) -> Finding {
     let usage = fsutil::dir_usage(path);
     let ages = stale != Duration::MAX;
     let is_stale = !ages || activity.idle(path, stale, root);
@@ -217,38 +264,6 @@ fn finding_for(path: &Path, stale: Duration, activity: &mut Activity, root: &Pat
         finding = finding.with_note(format!("idle > {}d", stale.as_secs() / 86_400));
     }
     finding
-}
-
-fn emit_marker_artifacts(
-    dir: &Path,
-    root: &Path,
-    kinds: &[ProjectKind],
-    stale: Duration,
-    activity: &mut Activity,
-    found: &mut Vec<Finding>,
-    emitted: &mut HashSet<PathBuf>,
-) {
-    let children: HashSet<String> = match std::fs::read_dir(dir) {
-        Ok(rd) => rd
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect(),
-        Err(_) => return,
-    };
-    for kind in kinds {
-        if !kind.markers.iter().any(|m| has_marker(&children, m)) {
-            continue;
-        }
-        for art in kind.artifacts {
-            if !children.contains(*art) {
-                continue;
-            }
-            let p = dir.join(art);
-            if p.is_dir() && emitted.insert(p.clone()) && !tracked_by_git(&p, root) {
-                found.push(finding_for(&p, stale, activity, root));
-            }
-        }
-    }
 }
 
 /// `*.ext` matches any child with that extension; otherwise an exact filename.
@@ -293,12 +308,6 @@ pub(crate) fn is_bundle(name: &str) -> bool {
     EXTS.iter().any(|ext| name.ends_with(ext))
 }
 
-fn parent_named(dir: &Path, name: &str) -> bool {
-    dir.parent()
-        .and_then(|p| p.file_name())
-        .is_some_and(|n| n == name)
-}
-
 /// The repository `path` sits in, looking no higher than `root`.
 fn git_root(path: &Path, root: &Path) -> Option<PathBuf> {
     path.ancestors()
@@ -341,7 +350,7 @@ const ACTIVITY_ENTRIES: usize = 20_000;
 struct Activity {
     /// Build output never counts as work: rebuilding it isn't editing.
     skip: HashSet<String>,
-    repos: std::collections::HashMap<PathBuf, Option<SystemTime>>,
+    repos: Mutex<HashMap<PathBuf, Option<SystemTime>>>,
 }
 
 impl Activity {
@@ -361,7 +370,7 @@ impl Activity {
     }
 
     /// Whether nothing in the project around `artifact` changed within `age`.
-    fn idle(&mut self, artifact: &Path, age: Duration, root: &Path) -> bool {
+    fn idle(&self, artifact: &Path, age: Duration, root: &Path) -> bool {
         let Some(project) = artifact.parent() else {
             return false;
         };
@@ -369,6 +378,8 @@ impl Activity {
         if let Some(repo) = git_root(artifact, root) {
             let last = *self
                 .repos
+                .lock()
+                .expect("never poisoned")
                 .entry(repo.clone())
                 .or_insert_with(|| repo_activity(&repo));
             newest = newest.max(last);

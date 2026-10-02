@@ -1,13 +1,14 @@
 use std::cmp::Reverse;
 use std::collections::HashSet;
-use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
+use rayon::prelude::*;
 
 use super::{app_caches::CACHE_NAMES, is_bundle, Target};
+use crate::bulk::{self, Entry, Kind};
 use crate::config::Config;
 use crate::fsutil;
 use crate::report::{CleanAction, Finding, Report};
@@ -34,12 +35,12 @@ impl Target for Heavy {
     }
 
     fn scan(&self, cfg: &Config) -> Result<Report> {
-        let mut scan = Scan::new(cfg);
-        scan.walk(&cfg.home, 0, &cfg.home);
+        let scan = Scan::new(cfg);
+        let branch = scan.walk(&cfg.home, 0, SystemTime::now());
 
         let mut report = Report::new(self.name());
-        report.findings = scan.found;
-        report.unreadable = scan.unreadable;
+        report.findings = branch.found;
+        report.unreadable = branch.unreadable;
         report.findings.sort_by_key(|a| Reverse(a.size));
         Ok(report)
     }
@@ -64,8 +65,16 @@ struct Scan<'a> {
     unwalked: Vec<PathBuf>,
     exclude: Vec<PathBuf>,
     home: PathBuf,
-    /// Files with more than one link, so each is weighed once.
-    linked: HashSet<(u64, u64)>,
+    /// Files with more than one link, so each is weighed once. Branches are
+    /// walked in parallel and a file's other name can be in any of them.
+    linked: Mutex<HashSet<(u64, u64)>>,
+}
+
+/// What walking a folder found: its weight for the parent, and what it
+/// reported or couldn't read along the way.
+#[derive(Default)]
+struct Branch {
+    subtree: Subtree,
     found: Vec<Finding>,
     unreadable: Vec<PathBuf>,
 }
@@ -134,141 +143,200 @@ fn is_bucket(path: &Path, home: &Path) -> bool {
     BUCKETS.iter().any(|b| path == home.join(b))
 }
 
+/// How one sub-folder weighs on its parent.
+enum Child {
+    /// Counted, but another target reports it, or no one should delete it.
+    Owned {
+        size: u64,
+        unreadable: Option<PathBuf>,
+    },
+    /// Sized in one pass: a bundle, or a folder past the depth cap.
+    Sized {
+        size: u64,
+        weight: Option<Weight>,
+        unreadable: Option<PathBuf>,
+    },
+    Walked(Branch),
+}
+
 impl<'a> Scan<'a> {
     fn new(cfg: &'a Config) -> Self {
         let mut covered: HashSet<&str> = cfg.project_dir_names.iter().map(String::as_str).collect();
         covered.extend(CACHE_NAMES);
         Self {
             min: cfg.heavy_min_bytes,
-            dev: fs::symlink_metadata(&cfg.home).map(|m| m.dev()).ok(),
+            dev: bulk::list(&cfg.home).map(|l| l.dev).ok(),
             stale_after: Duration::from_secs(cfg.downloads_stale_days * 86_400),
             covered,
             covered_roots: crate::catalog::covered_roots(&cfg.home),
             unwalked: cfg.prune_prefixes(),
             exclude: cfg.exclude.clone(),
             home: cfg.home.clone(),
-            linked: HashSet::new(),
-            found: Vec::new(),
-            unreadable: Vec::new(),
+            linked: Mutex::new(HashSet::new()),
         }
     }
 
     /// Size of everything under `dir`, reporting the folder that best describes
     /// each heavy item: deep enough to be specific, but not so deep that a lone
     /// chain of single-child folders buries the name that means something.
-    fn walk(&mut self, dir: &Path, depth: usize, home: &Path) -> Subtree {
-        let entries = match fs::read_dir(dir) {
-            Ok(entries) => entries,
+    /// Sub-folders are walked in parallel.
+    fn walk(&self, dir: &Path, depth: usize, modified: SystemTime) -> Branch {
+        let listing = match bulk::list(dir) {
+            Ok(listing) if self.dev.is_none_or(|dev| dev == listing.dev) => listing,
+            Ok(_) => return Branch::default(),
             Err(e) => {
+                let mut branch = Branch::default();
                 if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    self.unreadable.push(dir.to_path_buf());
+                    branch.unreadable.push(dir.to_path_buf());
                 }
-                return Subtree::default();
+                return branch;
             }
         };
         let mut total = 0;
         let mut owned_elsewhere = 0;
         let mut reported = false;
         let mut heavy: Vec<Weight> = Vec::new();
+        let mut found = Vec::new();
+        let mut unreadable = Vec::new();
+        let mut folders = Vec::new();
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            // lstat: never follow a symlink out of the tree, and never touch an
-            // evicted iCloud file just to size it.
-            let Ok(meta) = entry.metadata() else { continue };
-            if meta.is_symlink() || fsutil::is_dataless(&meta) {
+        for entry in listing.entries {
+            // Never follow a symlink out of the tree, never count an evicted
+            // iCloud file, never cross into another volume.
+            if entry.dataless || entry.mount_point {
                 continue;
             }
+            let path = dir.join(&entry.name);
+            match entry.kind {
+                Kind::File => {
+                    if entry.links > 1
+                        && !self
+                            .linked
+                            .lock()
+                            .expect("never poisoned")
+                            .insert((entry.dev, entry.ino))
+                    {
+                        continue;
+                    }
+                    total += entry.bytes;
+                    if entry.bytes >= self.min {
+                        heavy.push(self.weigh(path, entry.bytes, entry.modified));
+                    }
+                }
+                Kind::Dir => folders.push((path, entry)),
+                Kind::Symlink | Kind::Other => {}
+            }
+        }
 
-            if meta.is_file() {
-                if meta.nlink() > 1 && !self.linked.insert((meta.dev(), meta.ino())) {
-                    continue;
+        let children: Vec<Child> = folders
+            .into_par_iter()
+            .map(|(path, entry)| self.child(path, &entry, depth))
+            .collect();
+        for child in children {
+            match child {
+                Child::Owned {
+                    size,
+                    unreadable: u,
+                } => {
+                    total += size;
+                    owned_elsewhere += size;
+                    unreadable.extend(u);
                 }
-                let size = meta.blocks() * 512;
-                total += size;
-                if size >= self.min {
-                    heavy.push(self.weigh(path, size, &meta));
+                Child::Sized {
+                    size,
+                    weight,
+                    unreadable: u,
+                } => {
+                    total += size;
+                    heavy.extend(weight);
+                    unreadable.extend(u);
                 }
-                continue;
+                Child::Walked(sub) => {
+                    total += sub.subtree.size;
+                    owned_elsewhere += sub.subtree.owned;
+                    reported |= sub.subtree.reported;
+                    heavy.extend(sub.subtree.weight);
+                    found.extend(sub.found);
+                    unreadable.extend(sub.unreadable);
+                }
             }
-            if !meta.is_dir() || self.dev.is_some_and(|dev| dev != meta.dev()) {
-                continue;
-            }
-
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // What another target lists weighs on its parents without being
-            // named here.
-            if self.is_covered(&path, &name, depth) {
-                let size = fsutil::dir_size(&path);
-                total += size;
-                owned_elsewhere += size;
-                continue;
-            }
-            // So does what nobody should be offered to delete.
-            if fsutil::app_managed(&path, &self.home).is_some() || self.is_synced(&path) {
-                let usage = fsutil::dir_usage(&path);
-                if usage.unreadable {
-                    self.unreadable.push(path.clone());
-                }
-                total += usage.bytes;
-                owned_elsewhere += usage.bytes;
-                continue;
-            }
-
-            // A bundle is one item to the user even though it is a directory,
-            // and so is anything past the depth cap: size it in one pass.
-            let size = if is_bundle(&name) || depth + 1 >= MAX_DEPTH {
-                let usage = fsutil::dir_usage(&path);
-                if usage.unreadable {
-                    self.unreadable.push(path.clone());
-                }
-                let size = usage.bytes;
-                if size >= self.min {
-                    heavy.push(self.weigh(path, size, &meta));
-                }
-                size
-            } else {
-                let sub = self.walk(&path, depth + 1, home);
-                if let Some(w) = sub.weight {
-                    heavy.push(w);
-                }
-                owned_elsewhere += sub.owned;
-                reported |= sub.reported;
-                sub.size
-            };
-            total += size;
         }
 
         // A folder right under home — `~/Developer`, `~/Projects` — is where a
         // person keeps many things, never one thing to throw away.
-        if depth > 1 && !is_bucket(dir, home) {
+        if depth > 1 && !is_bucket(dir, &self.home) {
             // Nothing heavy inside, but the folder itself is heavy: it is the
             // item, as long as the weight isn't really a build dir we skipped.
             if !reported && heavy.is_empty() && total.saturating_sub(owned_elsewhere) >= self.min {
-                let w = self.weigh_dir(dir, total);
-                return Subtree::weighed(total, owned_elsewhere, reported, w);
+                let w = self.weigh(dir.to_path_buf(), total, modified);
+                let subtree = Subtree::weighed(total, owned_elsewhere, reported, w);
+                return Branch {
+                    subtree,
+                    found,
+                    unreadable,
+                };
             }
             // One child carries essentially all of it, so naming the child adds
             // nothing: report this folder instead — `…/.migration-staging`
             // rather than `…/.migration-staging/org/bol/models/production`.
             if depth >= MIN_DEPTH && heavy.len() == 1 && dominates(heavy[0].size, total) {
                 let inner = heavy.pop().expect("one heavy child").inner;
-                let mut w = self.weigh_dir(dir, total);
+                let mut w = self.weigh(dir.to_path_buf(), total, modified);
                 w.inner = inner;
-                return Subtree::weighed(total, owned_elsewhere, reported, w);
+                let subtree = Subtree::weighed(total, owned_elsewhere, reported, w);
+                return Branch {
+                    subtree,
+                    found,
+                    unreadable,
+                };
             }
         }
 
         reported |= !heavy.is_empty();
-        for w in heavy {
-            self.push(w);
+        found.extend(heavy.into_iter().map(|w| self.finding(w)));
+        Branch {
+            subtree: Subtree {
+                size: total,
+                owned: owned_elsewhere,
+                weight: None,
+                reported,
+            },
+            found,
+            unreadable,
         }
-        Subtree {
-            size: total,
-            owned: owned_elsewhere,
-            weight: None,
-            reported,
+    }
+
+    fn child(&self, path: PathBuf, entry: &Entry, depth: usize) -> Child {
+        let name = entry.name.to_string_lossy();
+        // What another target lists weighs on its parents without being
+        // named here.
+        if self.is_covered(&path, &name, depth) {
+            return Child::Owned {
+                size: fsutil::dir_size(&path),
+                unreadable: None,
+            };
         }
+        // So does what nobody should be offered to delete.
+        if fsutil::app_managed(&path, &self.home).is_some() || self.is_synced(&path) {
+            let usage = fsutil::dir_usage(&path);
+            return Child::Owned {
+                size: usage.bytes,
+                unreadable: usage.unreadable.then_some(path),
+            };
+        }
+        // A bundle is one item to the user even though it is a directory, and
+        // so is anything past the depth cap: size it in one pass.
+        if is_bundle(&name) || depth + 1 >= MAX_DEPTH {
+            let usage = fsutil::dir_usage(&path);
+            let weight = (usage.bytes >= self.min)
+                .then(|| self.weigh(path.clone(), usage.bytes, entry.modified));
+            return Child::Sized {
+                size: usage.bytes,
+                weight,
+                unreadable: usage.unreadable.then_some(path),
+            };
+        }
+        Child::Walked(self.walk(&path, depth + 1, entry.modified))
     }
 
     /// Whether another target already reports `path`: one of its exact paths,
@@ -300,26 +368,16 @@ impl<'a> Scan<'a> {
             .any(|r| path.starts_with(self.home.join(r)))
     }
 
-    fn weigh(&self, path: PathBuf, size: u64, meta: &fs::Metadata) -> Weight {
+    fn weigh(&self, path: PathBuf, size: u64, modified: SystemTime) -> Weight {
         Weight {
             inner: path.clone(),
             path,
             size,
-            stale: older_than(meta, self.stale_after),
+            stale: older_than(modified, self.stale_after),
         }
     }
 
-    fn weigh_dir(&self, dir: &Path, size: u64) -> Weight {
-        let stale = fs::symlink_metadata(dir).is_ok_and(|m| older_than(&m, self.stale_after));
-        Weight {
-            path: dir.to_path_buf(),
-            size,
-            inner: dir.to_path_buf(),
-            stale,
-        }
-    }
-
-    fn push(&mut self, w: Weight) {
+    fn finding(&self, w: Weight) -> Finding {
         let mut notes = Vec::new();
         if let Some(inner) = describe_inner(&w) {
             notes.push(format!("mostly {inner}"));
@@ -332,11 +390,12 @@ impl<'a> Scan<'a> {
         }
         // Nothing here is recognised, so nothing here is safe to delete blind:
         // these start unticked and `--yes` never touches them.
-        let mut finding = Finding::dir(w.path, w.size, CleanAction::RemovePath).risky(true);
-        if !notes.is_empty() {
-            finding = finding.with_note(notes.join(", "));
+        let finding = Finding::dir(w.path, w.size, CleanAction::RemovePath).risky(true);
+        if notes.is_empty() {
+            finding
+        } else {
+            finding.with_note(notes.join(", "))
         }
-        self.found.push(finding);
     }
 }
 
@@ -354,16 +413,16 @@ fn describe_inner(w: &Weight) -> Option<String> {
     })
 }
 
-fn older_than(meta: &fs::Metadata, age: Duration) -> bool {
-    meta.modified()
-        .ok()
-        .and_then(|m| SystemTime::now().duration_since(m).ok())
-        .is_some_and(|elapsed| elapsed > age)
+fn older_than(modified: SystemTime, age: Duration) -> bool {
+    SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|elapsed| elapsed > age)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn cfg_for(home: &Path, min: u64) -> Config {
         Config {
