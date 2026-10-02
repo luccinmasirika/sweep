@@ -14,12 +14,12 @@ pub struct VmImages;
 /// space *inside* the image, not on the Mac — so the image has to be measured
 /// and reset as a whole. All of it is re-creatable, but not for free: the note
 /// says what it costs and how to do it cleanly.
-struct Runtime {
-    rel: &'static str,
+pub(crate) struct Runtime {
+    pub(crate) rel: &'static str,
     note: &'static str,
 }
 
-const RUNTIMES: &[Runtime] = &[
+pub(crate) const RUNTIMES: &[Runtime] = &[
     Runtime {
         rel: ".colima",
         note: "colima VM disks — `colima delete` to reset",

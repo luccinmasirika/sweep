@@ -9,18 +9,33 @@ pub fn command_exists(name: &str) -> bool {
     which(name).is_some()
 }
 
+/// A relative `PATH` entry like `./node_modules/.bin` would resolve against
+/// wherever sweep happens to be started, so only absolute ones count.
 pub fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
+        .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(name))
         .find(|candidate| candidate.is_file())
+}
+
+/// Tools read project config from the directory they run in: `yarn cache
+/// clean` inside a Yarn project clears that project's cache, committed or not,
+/// and `pnpm store path` answers for its `.npmrc`. Every command runs from home
+/// so it acts on the user's global state only.
+fn command(cmd: &str) -> Command {
+    let mut command = Command::new(cmd);
+    if let Some(home) = dirs::home_dir() {
+        command.current_dir(home);
+    }
+    command
 }
 
 /// Run a cleanup command quietly: its own chatter (deleted Docker IDs, npm
 /// logs, …) is dropped so only sweep's progress shows.
 pub fn run(args: &[String]) -> Result<()> {
     let (cmd, rest) = args.split_first().ok_or_else(|| anyhow!("empty command"))?;
-    let status = Command::new(cmd)
+    let status = command(cmd)
         .args(rest)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -45,7 +60,7 @@ pub fn capture(args: &[String]) -> Result<String> {
 
 fn capture_within(args: &[String], timeout: Duration) -> Result<String> {
     let (cmd, rest) = args.split_first().ok_or_else(|| anyhow!("empty command"))?;
-    let mut child = Command::new(cmd)
+    let mut child = command(cmd)
         .args(rest)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -75,43 +75,71 @@ pub fn dir_usage(path: &Path) -> Usage {
             }
         });
 
-    let mut inodes = HashSet::new();
-    // Blocks a clone family shares, counted once per family. APFS gives an
-    // edited clone a new id, so its shared blocks can no longer be matched to
-    // the source and are counted again — never less than the truth, at worst
-    // what `du` would say.
-    let mut shared: HashMap<(u64, u64), u64> = HashMap::new();
-    let mut usage = Usage::default();
+    let mut tally = Tally::default();
+    let mut unreadable = false;
     for entry in walk {
         let entry = match entry {
             Ok(entry) => entry,
             Err(e) => {
-                usage.unreadable |= is_denied(&e);
+                unreadable |= is_denied(&e);
                 continue;
             }
         };
         // jwalk hands back a directory it couldn't list as a normal entry,
         // with the refusal tucked inside it.
         if let Some(e) = &entry.read_children_error {
-            usage.unreadable |= is_denied(e);
+            unreadable |= is_denied(e);
         }
-        let Some(file) = entry.client_state else {
-            continue;
-        };
-        if !inodes.insert((file.dev, file.ino)) {
-            continue;
+        if let Some(file) = entry.client_state {
+            tally.add(file);
+        }
+    }
+    Usage {
+        bytes: tally.bytes(),
+        unreadable,
+    }
+}
+
+/// On-disk bytes of these files taken together: a file linked twice counts
+/// once, and so do the blocks clones share.
+pub fn files_bytes(paths: &[PathBuf]) -> u64 {
+    let mut tally = Tally::default();
+    for file in paths.iter().filter_map(|p| file_blocks(p)) {
+        tally.add(file);
+    }
+    tally.bytes()
+}
+
+/// Adds up files as they cost on disk.
+#[derive(Default)]
+struct Tally {
+    inodes: HashSet<(u64, u64)>,
+    private: u64,
+    /// Blocks a clone family shares, counted once per family. APFS gives an
+    /// edited clone a new id, so its shared blocks can no longer be matched to
+    /// the source and are counted again — never less than the truth, at worst
+    /// what `du` would say.
+    shared: HashMap<(u64, u64), u64>,
+}
+
+impl Tally {
+    fn add(&mut self, file: FileBlocks) {
+        if !self.inodes.insert((file.dev, file.ino)) {
+            return;
         }
         match file.clone {
             Some((id, bytes)) => {
-                usage.bytes += file.bytes - bytes;
-                let family = shared.entry((file.dev, id)).or_default();
+                self.private += file.bytes - bytes;
+                let family = self.shared.entry((file.dev, id)).or_default();
                 *family = (*family).max(bytes);
             }
-            None => usage.bytes += file.bytes,
+            None => self.private += file.bytes,
         }
     }
-    usage.bytes += shared.values().sum::<u64>();
-    usage
+
+    fn bytes(&self) -> u64 {
+        self.private + self.shared.values().sum::<u64>()
+    }
 }
 
 /// What a single file occupies, and how much of that it may share.
@@ -294,6 +322,87 @@ fn is_protected(path: &Path, roots: &[PathBuf]) -> bool {
     })
 }
 
+/// Folders of the home directory that hold everything else. Removing one is
+/// never cleanup, whatever a detector or a stray tick says.
+const HOME_FOLDERS: &[&str] = &[
+    "Desktop",
+    "Documents",
+    "Downloads",
+    "Pictures",
+    "Movies",
+    "Music",
+    "Public",
+    "Library",
+    "Applications",
+];
+
+/// Where apps keep what can't be rebuilt or downloaded again: messages, mail,
+/// keys and passwords, synced files. Neither they nor anything inside them is
+/// removed file by file — the app owning them manages that.
+const PERSONAL_STORES: &[&str] = &[
+    "Library/Messages",
+    "Library/Mail",
+    "Library/Keychains",
+    "Library/Photos",
+    "Library/Calendars",
+    "Library/Application Support/AddressBook",
+    "Library/Containers/com.apple.mail",
+    ".ssh",
+    ".gnupg",
+];
+
+/// Synced and cloud-backed folders: removing one deletes it on every device.
+const SYNCED_ROOTS: &[&str] = &["Library/Mobile Documents", "Library/CloudStorage"];
+
+/// Library packages whose contents only their app may touch.
+const LIBRARY_BUNDLES: &[&str] = &[
+    ".photoslibrary",
+    ".musiclibrary",
+    ".tvlibrary",
+    ".aplibrary",
+    ".fcpbundle",
+    ".imovielibrary",
+    ".lrlibrary",
+];
+
+/// Why removing `path` would lose something no cleanup should, or `None` when
+/// it wouldn't. Checked on every removal, as the last word after any detector.
+pub fn irreplaceable(path: &Path, home: &Path) -> Option<&'static str> {
+    if home.starts_with(path) {
+        return Some("it holds your home folder");
+    }
+    if HOME_FOLDERS.iter().any(|f| path == home.join(f)) {
+        return Some("it is one of your home folders");
+    }
+    if SYNCED_ROOTS.iter().any(|r| home.join(r).starts_with(path)) {
+        return Some("it holds your synced files");
+    }
+    if PERSONAL_STORES
+        .iter()
+        .any(|s| home.join(s).starts_with(path))
+    {
+        return Some("it holds data only its app can manage");
+    }
+    app_managed(path, home)
+}
+
+/// Whether `path` is or sits inside data only its app may manage: a personal
+/// store like Messages, or a media library package.
+pub fn app_managed(path: &Path, home: &Path) -> Option<&'static str> {
+    if PERSONAL_STORES
+        .iter()
+        .any(|s| path.starts_with(home.join(s)))
+    {
+        return Some("it holds data only its app can manage");
+    }
+    let in_library = path.ancestors().any(|p| {
+        p.file_name()
+            .map(|n| n.to_string_lossy())
+            .is_some_and(|n| LIBRARY_BUNDLES.iter().any(|ext| n.ends_with(ext)))
+    });
+    in_library.then_some("it is part of a media library")
+}
+
 /// Remove a path. By default it moves to the Trash so a mistake is recoverable
 /// with Finder's "Put Back"; `purge` deletes it outright to reclaim space now.
 /// A move to the Trash returns what it moved, so the caller can later offer to
@@ -307,6 +416,9 @@ pub fn remove_path(path: &Path, purge: bool) -> Result<Option<TrashId>> {
             "refusing to remove protected toolchain path {}",
             path.display()
         );
+    }
+    if let Some(why) = dirs::home_dir().and_then(|home| irreplaceable(path, &home)) {
+        bail!("refusing to remove {}: {why}", path.display());
     }
     if purge {
         hard_remove(path, &meta)?;
@@ -422,10 +534,30 @@ fn delete_from(path: &Path, trashes: &[PathBuf]) -> Result<()> {
 /// followed into its target.
 fn hard_remove(path: &Path, meta: &fs::Metadata) -> Result<()> {
     if meta.is_dir() {
+        // Deleting a folder deletes into whatever is mounted inside it: a
+        // network share or an external disk would be wiped along with it.
+        if let Some(mount) = mount_inside(path, meta.dev()) {
+            bail!(
+                "refusing to remove {}: another volume is mounted at {}",
+                path.display(),
+                mount.display()
+            );
+        }
         fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))
     } else {
         fs::remove_file(path).with_context(|| format!("removing {}", path.display()))
     }
+}
+
+/// The first folder under `path` that belongs to another device than `dev`.
+fn mount_inside(path: &Path, dev: u64) -> Option<PathBuf> {
+    walkdir::WalkDir::new(path)
+        .min_depth(1)
+        .into_iter()
+        .flatten()
+        .filter(|e| e.file_type().is_dir())
+        .find(|e| e.metadata().is_ok_and(|m| m.dev() != dev))
+        .map(|e| e.into_path())
 }
 
 /// Something a clean deliberately left in place, and why.
@@ -728,6 +860,11 @@ pub fn snapshot_id(line: &str) -> Option<String> {
 /// True for the snapshots macOS leaves behind when an update is staged. They
 /// look like Time Machine snapshots to `tmutil` but have nothing to do with
 /// backups, and deleting them is how the staged update is abandoned.
+/// A Time Machine snapshot, as opposed to one macOS takes for an update.
+pub fn is_backup_snapshot(line: &str) -> bool {
+    line.contains("com.apple.TimeMachine")
+}
+
 pub fn is_update_snapshot(line: &str) -> bool {
     line.contains("com.apple.os.update") || line.contains("MSUPrepareUpdate")
 }
@@ -806,9 +943,9 @@ fn apfs_container() -> Option<Container> {
     parse_container(&out)
 }
 
-/// Look for a macOS update that was staged and left unfinished. Any one of the
-/// three signals alone is normal noise; together they are the reason tens of
-/// gigabytes are missing with no large file in sight.
+/// Look for a macOS update that was staged and left unfinished. Only a broken
+/// seal or an update snapshot says so: a big Preboot on its own is just a
+/// recent macOS, whose cryptexes keep it well past what it used to be.
 fn stalled_update(container: Option<&Container>) -> Option<StalledUpdate> {
     let snapshots: Vec<String> = local_snapshots()
         .into_iter()
@@ -819,18 +956,30 @@ fn stalled_update(container: Option<&Container>) -> Option<StalledUpdate> {
         .and_then(|c| c.volume("Preboot"))
         .map(|v| v.consumed)
         .unwrap_or(0);
-    // A healthy Preboot is a couple of GB; past that it is holding a staged
-    // system. Only the excess is attributed, and the installer sitting inside
-    // Preboot is deliberately not measured on its own — it is already in there.
-    const PREBOOT_NORMAL: u64 = 4_000_000_000;
-    if !seal_broken && snapshots.is_empty() && preboot <= PREBOOT_NORMAL {
+    stalled(seal_broken, snapshots, preboot, || {
+        dir_size(Path::new("/Library/Updates"))
+    })
+}
+
+/// A healthy Preboot on current macOS, cryptexes included. Past that it is
+/// holding a staged system; only the excess is attributed, and the installer
+/// inside Preboot isn't measured on its own — it is already in there.
+const PREBOOT_NORMAL: u64 = 10_000_000_000;
+
+fn stalled(
+    seal_broken: bool,
+    update_snapshots: Vec<String>,
+    preboot: u64,
+    updates: impl FnOnce() -> u64,
+) -> Option<StalledUpdate> {
+    if !seal_broken && update_snapshots.is_empty() {
         return None;
     }
     Some(StalledUpdate {
         seal_broken,
-        update_snapshots: snapshots,
+        update_snapshots,
         preboot_bytes: preboot.saturating_sub(PREBOOT_NORMAL),
-        updates_bytes: dir_size(Path::new("/Library/Updates")),
+        updates_bytes: updates(),
     })
 }
 
@@ -1350,5 +1499,59 @@ pub(crate) mod tests {
             &cargo
         ));
         assert!(is_protected(Path::new("/Users/x/.cargo/bin"), &cargo));
+    }
+
+    #[test]
+    fn a_folder_on_one_volume_has_nothing_mounted_inside() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("a/b/c")).unwrap();
+        let dev = fs::symlink_metadata(dir.path()).unwrap().dev();
+
+        assert_eq!(mount_inside(dir.path(), dev), None);
+        // Seen from a different device, the first folder down is the mount.
+        assert_eq!(
+            mount_inside(dir.path(), dev + 1),
+            Some(dir.path().join("a"))
+        );
+    }
+
+    #[test]
+    fn a_big_preboot_alone_is_not_a_stalled_update() {
+        assert!(stalled(false, Vec::new(), 9_090_000_000, || 0).is_none());
+        assert!(stalled(false, Vec::new(), 18_000_000_000, || 0).is_none());
+
+        let broken = stalled(true, Vec::new(), 18_000_000_000, || 0).unwrap();
+        assert_eq!(broken.preboot_bytes, 8_000_000_000);
+        let staged = vec!["com.apple.os.update-4F1E.local".to_string()];
+        assert!(stalled(false, staged, 0, || 0).is_some());
+    }
+
+    #[test]
+    fn what_cant_be_rebuilt_is_never_removed() {
+        let home = Path::new("/Users/x");
+        for path in [
+            "/Users",
+            "/Users/x",
+            "/Users/x/Documents",
+            "/Users/x/Library",
+            "/Users/x/Library/Messages",
+            "/Users/x/Library/Messages/Attachments/ab/photo.heic",
+            "/Users/x/Library/Mail/V10",
+            "/Users/x/Library/Mobile Documents",
+            "/Users/x/Library/CloudStorage",
+            "/Users/x/Pictures/Photos Library.photoslibrary",
+            "/Users/x/Pictures/Photos Library.photoslibrary/originals/0",
+            "/Users/x/.ssh",
+        ] {
+            assert!(irreplaceable(Path::new(path), home).is_some(), "{path}");
+        }
+        for path in [
+            "/Users/x/Library/Caches/com.app",
+            "/Users/x/Documents/old-export.zip",
+            "/Users/x/Library/CloudStorage/Dropbox/big.mov",
+            "/Users/x/code/app/node_modules",
+        ] {
+            assert!(irreplaceable(Path::new(path), home).is_none(), "{path}");
+        }
     }
 }

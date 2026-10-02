@@ -35,9 +35,14 @@ impl Target for DevTools {
             );
             let orphans = brew_orphans();
             let count = orphans.len();
+            // "Unneeded" means nothing depends on them, not that nobody uses
+            // them: a formula installed as a dependency is often run directly.
             f.push(
                 dirs_finding("Homebrew orphans", orphans, &["brew", "autoremove"])
-                    .with_note(format!("{count} unneeded formulae")),
+                    .risky(true)
+                    .with_note(format!(
+                        "{count} formulae nothing depends on — check you don't use them"
+                    )),
             );
         }
 
@@ -161,42 +166,36 @@ impl Target for DevTools {
 
         if exec::command_exists("conda") {
             let pkgs = store_path(&["conda", "info", "--base"]).map(|base| base.join("pkgs"));
-            f.push(dirs_finding(
-                "conda packages",
-                pkgs.into_iter().collect(),
-                &["conda", "clean", "-a", "-y"],
-            ));
+            // Environments created with hard links or softlinks point into
+            // `pkgs`; `clean -a` can leave them broken.
+            f.push(
+                dirs_finding(
+                    "conda packages",
+                    pkgs.into_iter().collect(),
+                    &["conda", "clean", "-a", "-y"],
+                )
+                .risky(true)
+                .with_note("can break environments linked to the package cache"),
+            );
         }
 
         // The Command Line Tools ship `xcrun` without `simctl`; only a full
         // Xcode has simulators to delete.
         if let Some(devices) = unavailable_simulators(&cfg.home) {
-            f.push(dirs_finding(
-                "unavailable simulators",
-                devices,
-                &["xcrun", "simctl", "delete", "unavailable"],
-            ));
+            f.push(
+                dirs_finding(
+                    "unavailable simulators",
+                    devices,
+                    &["xcrun", "simctl", "delete", "unavailable"],
+                )
+                .risky(true)
+                .with_note("their apps and data go with them"),
+            );
         }
 
         if exec::command_exists("docker") {
             if let Some(usage) = docker_usage() {
-                let label = if cfg.aggressive {
-                    "Docker (all unused images & networks)"
-                } else {
-                    "Docker (unused images & networks)"
-                };
-                f.push(
-                    Finding::dir(
-                        PathBuf::from(label),
-                        usage.reclaimable(cfg.aggressive, cfg.prune_volumes),
-                        CleanAction::Command(docker_prune_cmd(cfg.aggressive, cfg.prune_volumes)),
-                    )
-                    .remeasure(Remeasure::Probe(docker_probe(
-                        cfg.aggressive,
-                        cfg.prune_volumes,
-                    )))
-                    .with_note("inside the VM disk — see vm-images for the disk itself"),
-                );
+                f.extend(docker_findings(&usage, cfg.aggressive, cfg.prune_volumes));
             }
         }
 
@@ -229,15 +228,58 @@ fn probe_finding(label: &str, probe: fn() -> u64, cmd: &[&str]) -> Finding {
     .remeasure(Remeasure::Probe(probe))
 }
 
-/// What `docker system prune` with these flags would still remove, asked
-/// again after it ran. One function per flag set, since a remeasure can't carry
-/// state.
-fn docker_probe(all_images: bool, volumes: bool) -> fn() -> u64 {
-    match (all_images, volumes) {
-        (false, _) => || docker_usage().map_or(0, |u| u.reclaimable(false, false)),
-        (true, false) => || docker_usage().map_or(0, |u| u.reclaimable(true, false)),
-        (true, true) => || docker_usage().map_or(0, |u| u.reclaimable(true, true)),
+/// Docker's reclaimable space, one prune per kind so each can be judged on its
+/// own. The build cache is pure cache. A stopped container still holds
+/// whatever it wrote outside a volume — a database, a half-configured dev box
+/// — so it takes a tick. Unused images come with `--aggressive`, volumes with
+/// `--volumes`, and a volume is data, so even then it takes a tick.
+fn docker_findings(usage: &DockerUsage, aggressive: bool, volumes: bool) -> Vec<Finding> {
+    let note = "inside the VM disk — see vm-images for the disk itself";
+    let mut out = vec![
+        Finding::dir(
+            PathBuf::from("Docker build cache"),
+            usage.build_cache,
+            CleanAction::Command(words(&["docker", "builder", "prune", "-f"])),
+        )
+        .remeasure(Remeasure::Probe(|| {
+            docker_usage().map_or(0, |u| u.build_cache)
+        }))
+        .with_note(note),
+        Finding::dir(
+            PathBuf::from("Docker stopped containers"),
+            usage.containers,
+            CleanAction::Command(words(&["docker", "container", "prune", "-f"])),
+        )
+        .risky(true)
+        .remeasure(Remeasure::Probe(|| {
+            docker_usage().map_or(0, |u| u.containers)
+        }))
+        .with_note("anything they wrote outside a volume goes with them"),
+    ];
+    if aggressive {
+        out.push(
+            Finding::dir(
+                PathBuf::from("Docker unused images"),
+                usage.images,
+                CleanAction::Command(words(&["docker", "image", "prune", "-a", "-f"])),
+            )
+            .remeasure(Remeasure::Probe(|| docker_usage().map_or(0, |u| u.images)))
+            .with_note("pulled again when next needed"),
+        );
     }
+    if volumes {
+        out.push(
+            Finding::dir(
+                PathBuf::from("Docker unused volumes"),
+                usage.volumes,
+                CleanAction::Command(words(&["docker", "volume", "prune", "-f"])),
+            )
+            .risky(true)
+            .remeasure(Remeasure::Probe(|| docker_usage().map_or(0, |u| u.volumes)))
+            .with_note("volume data can't be recovered"),
+        );
+    }
+    out
 }
 
 /// The directory a tool prints as its cache location, if it exists.
@@ -248,13 +290,16 @@ fn store_path(query: &[&str]) -> Option<PathBuf> {
         .filter(|p| p.is_dir())
 }
 
-/// Sibling store versions next to the one in use. Each is a complete package
+/// Older store versions next to the one in use. Each is a complete package
 /// store an older pnpm left behind, and no pnpm command will ever touch it.
+/// Only `vN` folders below the active version count — a newer one belongs to a
+/// newer pnpm installed elsewhere — and each takes a tick, since a project
+/// pinned to that older pnpm through corepack may still use it.
 fn abandoned_stores(active: Option<&Path>) -> Vec<Finding> {
     let Some(active) = active else {
         return Vec::new();
     };
-    let Some(parent) = active.parent() else {
+    let (Some(parent), Some(current)) = (active.parent(), store_version(active)) else {
         return Vec::new();
     };
     let Ok(entries) = std::fs::read_dir(parent) else {
@@ -263,7 +308,7 @@ fn abandoned_stores(active: Option<&Path>) -> Vec<Finding> {
     let mut out = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path == active || !path.is_dir() {
+        if !store_version(&path).is_some_and(|v| v < current) || !path.is_dir() {
             continue;
         }
         let size = fsutil::dir_size(&path);
@@ -272,10 +317,16 @@ fn abandoned_stores(active: Option<&Path>) -> Vec<Finding> {
         }
         out.push(
             Finding::dir(path, size, CleanAction::RemovePath)
+                .risky(true)
                 .with_note("store left behind by an older pnpm"),
         );
     }
     out
+}
+
+/// `3` for a store folder named `v3`.
+fn store_version(path: &Path) -> Option<u32> {
+    path.file_name()?.to_str()?.strip_prefix('v')?.parse().ok()
 }
 
 /// What `brew cleanup -s` would free, from its own dry run.
@@ -371,22 +422,6 @@ struct DockerUsage {
     build_cache: u64,
 }
 
-impl DockerUsage {
-    /// What `docker system prune` with these flags would remove. Without `-a`
-    /// only dangling images go, and Docker doesn't report those apart, so
-    /// images are left out: the figure is a floor, not a promise.
-    fn reclaimable(&self, all_images: bool, volumes: bool) -> u64 {
-        let mut bytes = self.containers + self.build_cache;
-        if all_images {
-            bytes += self.images;
-        }
-        if volumes {
-            bytes += self.volumes;
-        }
-        bytes
-    }
-}
-
 /// `None` when the daemon can't be reached — stopped, or its VM is — in which
 /// case there's nothing a prune could do either.
 fn docker_usage() -> Option<DockerUsage> {
@@ -448,17 +483,6 @@ fn words(args: &[&str]) -> Vec<String> {
     args.iter().map(|a| a.to_string()).collect()
 }
 
-fn docker_prune_cmd(aggressive: bool, volumes: bool) -> Vec<String> {
-    let mut cmd = words(&["docker", "system", "prune", "-f"]);
-    if aggressive {
-        cmd.push("-a".to_string());
-    }
-    if volumes {
-        cmd.push("--volumes".to_string());
-    }
-    cmd
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,30 +526,62 @@ mod tests {
     }
 
     #[test]
-    fn docker_reclaimable_follows_prune_flags() {
+    fn reads_docker_usage() {
         let out = "Images\t4.5GB (80%)\nContainers\t120MB (100%)\n\
                    Local Volumes\t2GB (50%)\nBuild Cache\t1.1GB\n";
         let usage = parse_docker_usage(out).unwrap();
-        assert_eq!(usage.reclaimable(false, false), 1_220_000_000);
-        assert_eq!(usage.reclaimable(true, false), 5_720_000_000);
-        assert_eq!(usage.reclaimable(true, true), 7_720_000_000);
+        assert_eq!(
+            usage,
+            DockerUsage {
+                images: 4_500_000_000,
+                containers: 120_000_000,
+                volumes: 2_000_000_000,
+                build_cache: 1_100_000_000,
+            }
+        );
         // An unreachable daemon prints nothing on stdout.
         assert_eq!(parse_docker_usage(""), None);
     }
 
     #[test]
-    fn docker_cmd_scales_with_flags() {
-        assert_eq!(
-            docker_prune_cmd(false, false),
-            ["docker", "system", "prune", "-f"]
+    fn only_the_build_cache_goes_without_asking() {
+        let usage = DockerUsage {
+            images: 4,
+            containers: 3,
+            volumes: 2,
+            build_cache: 1,
+        };
+        let plain = docker_findings(&usage, false, false);
+        let auto: Vec<_> = plain.iter().filter(|f| f.auto()).collect();
+        assert_eq!(auto.len(), 1);
+        assert_eq!(auto[0].size, 1);
+        assert!(
+            plain.iter().any(|f| f.risky && f.size == 3),
+            "stopped containers need a tick"
         );
-        assert_eq!(
-            docker_prune_cmd(true, false),
-            ["docker", "system", "prune", "-f", "-a"]
+
+        let all = docker_findings(&usage, true, true);
+        assert_eq!(all.len(), 4);
+        let volumes = all.iter().find(|f| f.size == 2).unwrap();
+        assert!(
+            volumes.risky,
+            "volume data needs a tick even with --volumes"
         );
-        assert_eq!(
-            docker_prune_cmd(true, true),
-            ["docker", "system", "prune", "-f", "-a", "--volumes"]
-        );
+    }
+
+    #[test]
+    fn only_older_pnpm_stores_are_left_behind() {
+        let root = tempfile::tempdir().unwrap();
+        for v in ["v3", "v10", "v11", "tmp"] {
+            let store = root.path().join(v);
+            std::fs::create_dir_all(&store).unwrap();
+            std::fs::write(store.join("blob"), vec![0u8; 4096]).unwrap();
+        }
+
+        let found = abandoned_stores(Some(&root.path().join("v10")));
+
+        assert_eq!(found.len(), 1);
+        assert!(found[0].path.ends_with("v3"));
+        assert!(found[0].risky);
     }
 }

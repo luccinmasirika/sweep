@@ -35,6 +35,29 @@ fn config_json_is_valid() {
     assert!(parsed.get("projects").is_some());
 }
 
+// Piped output is not a yes: without a terminal, nothing is cleaned unasked.
+#[test]
+fn clean_without_a_terminal_needs_yes() {
+    let home = tempfile::tempdir().unwrap();
+    let cache = home.path().join("Library/Caches/app");
+    fs::create_dir_all(&cache).unwrap();
+    fs::write(cache.join("blob"), vec![0u8; 2_000_000]).unwrap();
+    let cfg = home.path().join("sweep.toml");
+    fs::write(&cfg, format!("home = {:?}\n", home.path())).unwrap();
+
+    for cmd in [&["clean", "--only", "system-caches"][..], &["smart"][..]] {
+        Command::cargo_bin("sweep")
+            .unwrap()
+            .arg("--config")
+            .arg(&cfg)
+            .args(cmd)
+            .assert()
+            .failure()
+            .stderr(contains("--yes"));
+    }
+    assert!(cache.join("blob").exists());
+}
+
 // Proves detection is driven by the configured home, not the real machine.
 #[test]
 fn scan_detects_projects_under_configured_home() {
